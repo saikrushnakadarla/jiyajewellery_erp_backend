@@ -14,7 +14,6 @@ const createOpeningTag = (req, res) => {
         cut,
         color,
         clarity,
-        // Tag_ID,
         subcategory_id,
         sub_category,
         design_master,
@@ -41,7 +40,7 @@ const createOpeningTag = (req, res) => {
         tax_amt = 0,
         total_price = 0,
         Status = "Available",
-        Source = "",
+        Source = "Purchase",
         Stock_Point = "",
         pieace_cost = "",
         Design_Master = "",
@@ -74,7 +73,8 @@ const createOpeningTag = (req, res) => {
         tax_percent,
         mrp_price,
         total_pcs_cost,
-        printing_purity
+        printing_purity,
+        source_from = "ERP"  // NEW: Source field for ERP - always "ERP"
     } = req.body;
 
     const productImage = req.file ? req.file.filename : null;
@@ -82,7 +82,6 @@ const createOpeningTag = (req, res) => {
     const sanitizeValue = (value, defaultValue = 0) => {
         return value === "" || value === null || value === undefined ? defaultValue : value;
     };
-
 
     const data = {
         tag_id,
@@ -93,7 +92,6 @@ const createOpeningTag = (req, res) => {
         cut,
         color,
         clarity,
-        // Tag_ID,
         subcategory_id,
         sub_category,
         design_master,
@@ -154,8 +152,8 @@ const createOpeningTag = (req, res) => {
         mrp_price: sanitizeValue(mrp_price),
         total_pcs_cost: sanitizeValue(total_pcs_cost),
         printing_purity: sanitizeValue(printing_purity),
+        source_from: source_from  // NEW: Source field for ERP
     };
-
 
     openingTagsModel.addOpeningTag(data, (err, result) => {
         if (err) {
@@ -183,17 +181,14 @@ const updateOpeningTag = (req, res) => {
     const { id } = req.params;
     let updatedData = req.body;
 
-    // Handle empty strings for fields that expect decimals
     if (updatedData.Making_Charges === '') {
-        updatedData.Making_Charges = null;  // Set to null or appropriate default value
+        updatedData.Making_Charges = null;
     }
 
-    // Convert 'date' field to MySQL-compatible format if it exists
     if (updatedData.date) {
         updatedData.date = moment(updatedData.date).format('YYYY-MM-DD HH:mm:ss');
     }
 
-    // Step 1: Fetch the current `product_id` and `Gross_Weight` from `opening_tags_entry`
     const getOpeningTagQuery = `SELECT product_id, tag_id, Gross_Weight FROM opening_tags_entry WHERE opentag_id = ?`;
 
     db.query(getOpeningTagQuery, [id], (err, result) => {
@@ -205,22 +200,20 @@ const updateOpeningTag = (req, res) => {
             return res.status(404).json({ message: "Record not found" });
         }
 
-        const { product_id, tag_id, Gross_Weight: oldGrossWeight } = result[0];  // Old Gross Weight from DB
-        const newGrossWeight = updatedData.Gross_Weight;  // New Gross Weight from Request
+        const { product_id, tag_id, Gross_Weight: oldGrossWeight } = result[0];
+        const newGrossWeight = updatedData.Gross_Weight;
 
-        // Step 2: Update `updated_values_table`
         const updateValuesQuery = `
             UPDATE updated_values_table 
             SET bal_gross_weight = bal_gross_weight + ? - ? 
             WHERE product_id = ? AND tag_id = ?`;
 
-        db.query(updateValuesQuery, [oldGrossWeight, newGrossWeight, product_id, tag_id,], (err, updateResult) => {
+        db.query(updateValuesQuery, [oldGrossWeight, newGrossWeight, product_id, tag_id], (err, updateResult) => {
             if (err) {
                 console.error("Database error updating values table:", err);
                 return res.status(500).json({ error: "Failed to update updated_values_table", details: err });
             }
 
-            // Step 3: Update `opening_tags_entry` with new values
             openingTagsModel.updateOpeningTag(id, updatedData, (err, updateTagResult) => {
                 if (err) {
                     console.error("Database error updating opening tag:", err);
@@ -243,7 +236,6 @@ const deleteOpeningTag = (req, res) => {
         return res.status(400).json({ error: "Invalid ID received" });
     }
 
-    // Fetch record — include PCode_BarCode
     const getOpeningTagQuery = `
         SELECT product_id, tag_id, Gross_Weight, PCode_BarCode 
         FROM opening_tags_entry 
@@ -268,7 +260,6 @@ const deleteOpeningTag = (req, res) => {
             return res.status(400).json({ error: "Invalid product_id" });
         }
 
-        // 1️⃣ Update values table
         const updateValuesQuery = `
             UPDATE updated_values_table 
             SET bal_gross_weight = bal_gross_weight + ?, bal_pcs = bal_pcs + 1 
@@ -281,10 +272,8 @@ const deleteOpeningTag = (req, res) => {
                 return res.status(500).json({ error: "Database error updating values table", details: err });
             }
 
-            // 2️⃣ Delete the invoice file (if exists)
             if (PCode_BarCode) {
                 const filePath = path.join(__dirname, "../uploads/invoices", `${PCode_BarCode}.pdf`);
-
                 fs.unlink(filePath, (unlinkErr) => {
                     if (unlinkErr && unlinkErr.code !== "ENOENT") {
                         console.error("Error deleting invoice PDF:", unlinkErr);
@@ -292,7 +281,6 @@ const deleteOpeningTag = (req, res) => {
                 });
             }
 
-            // 3️⃣ Delete DB record
             const deleteQuery = `DELETE FROM opening_tags_entry WHERE opentag_id = ?`;
 
             db.query(deleteQuery, [id], (err, deleteResult) => {
@@ -303,7 +291,6 @@ const deleteOpeningTag = (req, res) => {
                 if (deleteResult.affectedRows === 0) {
                     return res.status(404).json({ message: "No record found to delete" });
                 }
-
                 return res.status(200).json({ message: "Opening tag deleted successfully" });
             });
         });
@@ -354,24 +341,20 @@ const getLastPcode = (req, res) => {
             return res.status(500).json({ error: "Failed to fetch last PCode_BarCode" });
         }
 
-        // Ensure result has data
         if (result && result.length > 0) {
-            // Extract rbarcode values that start with "RB"
             const PCode_BarCode = result
-                .map(row => row.PCode_BarCode) // Extract rbarcode from each row
-                .filter(product => product && product.startsWith("0")) // Filter only valid RB numbers
-                .map(product => parseInt(product.slice(2), 10)) // Extract the numeric part of rbarcode
-                .filter(number => !isNaN(number)); // Ensure numeric parsing was successful
+                .map(row => row.PCode_BarCode)
+                .filter(product => product && product.startsWith("0"))
+                .map(product => parseInt(product.slice(2), 10))
+                .filter(number => !isNaN(number));
 
             if (PCode_BarCode.length > 0) {
-                // Find the maximum rbarcode number and increment it
                 const lastPCode_BarCode = Math.max(...PCode_BarCode);
                 const nextPCode_BarCode = `0${String(lastPCode_BarCode + 1).padStart(3, "0")}`;
                 return res.json({ lastPCode_BarCode: nextPCode_BarCode });
             }
         }
 
-        // Default if no valid RB numbers are found
         res.json({ lastPCode_BarCode: "001" });
     });
 };
@@ -392,10 +375,10 @@ const getNextPCodeBarCode = (req, res) => {
         let nextCode;
         if (results.length > 0) {
             const lastCode = results[0].PCode_BarCode;
-            const numericPart = parseInt(lastCode.slice(prefix.length)) || 0; // Extract numeric part
-            nextCode = `${prefix}${String(numericPart + 1).padStart(3, '0')}`; // Increment and format
+            const numericPart = parseInt(lastCode.slice(prefix.length)) || 0;
+            nextCode = `${prefix}${String(numericPart + 1).padStart(3, '0')}`;
         } else {
-            nextCode = `${prefix}001`; // Start fresh if no entries found
+            nextCode = `${prefix}001`;
         }
 
         res.status(200).json({ nextPCodeBarCode: nextCode });

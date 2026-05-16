@@ -2,15 +2,21 @@
 const accountModel = require('../models/accountModel');
 
 // Create a new account
-const createAccount = (req, res) => {
+const createAccount = async (req, res) => {
     const data = req.body;
-    accountModel.createAccount(data, (err, result) => {
-        if (err) {
-            console.error('Error inserting into accounts:', err.message);
-            return res.status(500).json({ error: 'Database error' });
-        }
-        res.status(201).json({ message: 'Account created successfully', account_id: result.insertId });
-    });
+    const files = req.files;
+    
+    try {
+        const result = await accountModel.createAccount(data, files);
+        res.status(201).json({ 
+            message: 'Account created successfully', 
+            account_id: result.insertId,
+            customer_id: result.customer_id  // Return customer_id in response
+        });
+    } catch (err) {
+        console.error('Error inserting into account_details:', err.message);
+        res.status(500).json({ error: 'Database error', details: err.message });
+    }
 };
 
 // Get all accounts
@@ -43,7 +49,10 @@ const getAccountById = (req, res) => {
 const updateAccount = (req, res) => {
     const { id } = req.params;
     const data = req.body;
-    accountModel.updateAccount(id, data, (err, result) => {
+    const files = req.files;
+    const imagesToKeep = req.body.imagesToKeep;
+    
+    accountModel.updateAccount(id, data, files, imagesToKeep, (err, result) => {
         if (err) {
             console.error('Error updating account:', err.message);
             return res.status(500).json({ error: 'Database error' });

@@ -44,7 +44,8 @@ const purchasePaymentRoutes = require("./routes/purchasePaymentRoutes");
 const offerRoutes = require("./routes/OffersRoutes");
 const repairInvoiceRoutes = require("./routes/repairInvoiceRoute");
 const advanceReceiptsRoutes = require("./routes/advanceReceiptsRoutes");
-const ledgerroutes = require("./routes/ledgerroutes");
+const ledgerroutes = require("./routes/ledgerroutes"); 
+const salesRateCutsRoutes = require("./routes/salesRateCutsRoutes");
 
 const app = express();
 const PORT = 5001;
@@ -70,6 +71,7 @@ app.use('/', accountRoutes);
 app.use('/', accountGroupRoutes);
 app.use('/', receiptRoutes);
 app.use('/', paymentRoutes);
+app.use('/', salesRateCutsRoutes);
 app.use('/', repairRoutes);
 app.use('/', repairDetailsRoutes);
 app.use('/', accountDetailsRoutes);

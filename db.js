@@ -5,7 +5,7 @@ const db = mysql.createPool({
   user: 'root', 
   password: '', 
   database: 'jiyajewellery_erp',
-  // port:4306
+  port:4306
 });
 
 

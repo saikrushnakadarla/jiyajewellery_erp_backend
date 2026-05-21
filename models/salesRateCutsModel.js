@@ -54,7 +54,7 @@ const insertSalesRateCut = async (formData) => {
     return result.insertId;
 };
 
-const updateRepairDetailsWithRateCut = async (repairId, paid_amount, rate_cut_wt) => {
+const updateRepairDetailsWithRateCut = async (repairId, paid_amount, rate_cut_wt, rate_cut_amt) => {
     // First, get current repair details
     const getRepairQuery = `SELECT * FROM repair_details WHERE id = ?`;
     const [repairRows] = await db.promise().query(getRepairQuery, [repairId]);
@@ -64,18 +64,35 @@ const updateRepairDetailsWithRateCut = async (repairId, paid_amount, rate_cut_wt
     const repair = repairRows[0];
     const currentRateCutPaid = parseFloat(repair.rate_cut_paid_amount) || 0;
     const currentRateCutWt = parseFloat(repair.rate_cut_wt) || 0;
+    const currentRateCutAmount = parseFloat(repair.rate_cut_amount) || 0;
+    const currentBalAmt = parseFloat(repair.bal_amt) || 0;
+    const currentBalAfterReceipts = parseFloat(repair.bal_after_receipts) || 0;
     
     const newPaidAmount = currentRateCutPaid + parseFloat(paid_amount);
     const newRateCutWt = currentRateCutWt + parseFloat(rate_cut_wt);
+    const newRateCutAmount = currentRateCutAmount + parseFloat(rate_cut_amt);
     
-    // Update repair_details with cumulative rate cut values
+    // Calculate new bal_after_receipts = bal_amt - rate_cut_paid_amount
+    const newBalAfterReceipts = currentBalAmt - newPaidAmount;
+    
+    console.log("Updating repair_details with:", {
+        repairId,
+        currentBalAmt,
+        currentBalAfterReceipts,
+        newPaidAmount,
+        newBalAfterReceipts
+    });
+    
+    // Update repair_details with cumulative rate cut values AND update bal_after_receipts
     const updateQuery = `
         UPDATE repair_details 
         SET rate_cut_paid_amount = ?,
-            rate_cut_wt = ?
+            rate_cut_wt = ?,
+            rate_cut_amount = ?,
+            bal_after_receipts = ?
         WHERE id = ?`;
     
-    await db.promise().query(updateQuery, [newPaidAmount, newRateCutWt, repairId]);
+    await db.promise().query(updateQuery, [newPaidAmount, newRateCutWt, newRateCutAmount, newBalAfterReceipts, repairId]);
 };
 
 module.exports = { 

@@ -52,5 +52,7 @@ router.delete('/repair-details/:invoiceNumber', repairController.deleteRepairDet
 // router.delete('/order-details/:invoiceNumber', repairController.deleteOrderDetails);
 router.put('/update-order-status', repairController.updateOrderStatus);
 
+router.get("/get-repair-details-by-id/:id", repairController.getRepairDetailsById);
+
 module.exports = router;
 

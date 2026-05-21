@@ -52,18 +52,23 @@ const addSalesRateCut = async (req, res) => {
             return res.status(400).json({ error: "Rate Cut value is required and must be greater than 0" });
         }
         
+        if (!formData.paid_amount || parseFloat(formData.paid_amount) <= 0) {
+            return res.status(400).json({ error: "Paid Amount is required and must be greater than 0" });
+        }
+        
         // Insert into sales_rate_cuts table
         const insertId = await SalesRateCutsModel.insertSalesRateCut(formData);
         
-        // Update repair_details table with cumulative rate cut values
+        // Update repair_details table with cumulative rate cut values and update bal_after_receipts
         await SalesRateCutsModel.updateRepairDetailsWithRateCut(
             formData.repair_id, 
             formData.paid_amount || 0, 
-            formData.rate_cut_wt
+            formData.rate_cut_wt,
+            formData.rate_cut_amt || 0
         );
         
         res.status(200).json({ 
-            message: "Sales rate cut added successfully and repair details updated.", 
+            message: "Sales rate cut added successfully. Balance amount updated in repair details.", 
             insertId 
         });
     } catch (error) {

@@ -6,7 +6,7 @@ const path = require("path");
 exports.addPayment = (req, res) => {
     const {
         date, mode, transaction_type, cheque_number, receipt_no, account_name, invoice_number,
-        total_amt, discount_amt, cash_amt, remarks, category, mobile
+        total_amt, discount_amt, cash_amt, remarks, total_wt, paid_wt, bal_wt, category, mobile
     } = req.body;
 
     // Check for required fields
@@ -17,20 +17,16 @@ exports.addPayment = (req, res) => {
     // Ensure mode is NULL if empty
     const modeValue = mode && mode.trim() !== '' ? mode : null;
 
-    // Prepare data for payment insertion (16 fields expected by model but we'll handle in model)
+    // Prepare data for payment insertion
     const paymentData = [
         transaction_type, date, modeValue, cheque_number || null, receipt_no,
-        account_name, invoice_number, total_amt, discount_amt || 0, cash_amt || 0, remarks || null, 
-        null, // total_wt (not used)
-        null, // paid_wt (not used)
-        null, // bal_wt (not used)
-        category, mobile
+        account_name, invoice_number, total_amt, discount_amt || 0, cash_amt || 0, remarks || null, total_wt, paid_wt, bal_wt, category, mobile
     ];
 
     // Call the model method
     PaymentModel.addPaymentAndUpdateRepair(
         paymentData,
-        discount_amt || 0, cash_amt || 0, 0, 0, invoice_number,
+        discount_amt || 0, cash_amt || 0, paid_wt || 0, bal_wt || 0, invoice_number,
         (err, paymentId) => {
             if (err) {
                 console.error('Error adding payment and updating repair details:', err.message);

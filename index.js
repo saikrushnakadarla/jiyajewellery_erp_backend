@@ -46,6 +46,7 @@ const repairInvoiceRoutes = require("./routes/repairInvoiceRoute");
 const advanceReceiptsRoutes = require("./routes/advanceReceiptsRoutes");
 const ledgerroutes = require("./routes/ledgerroutes"); 
 const salesRateCutsRoutes = require("./routes/salesRateCutsRoutes");
+const stockPointsRoutes = require("./routes/stockPointsRoutes");
 
 const app = express();
 const PORT = 5001;
@@ -101,6 +102,7 @@ app.use("/", purchasePaymentRoutes);
 app.use('/api', offerRoutes);
 app.use('/', repairInvoiceRoutes);
 app.use('/', advanceReceiptsRoutes);
+app.use('/api', stockPointsRoutes);
 
 // Start the server
 app.listen(PORT, () => {

@@ -376,6 +376,46 @@ exports.deleteRepairDetails = (req, res) => {
 };
 
 
+exports.getRepairDetailsById = (req, res) => {
+  const { id } = req.params;
+
+  if (!id) {
+    return res.status(400).json({ message: "Repair ID is required" });
+  }
+
+  const sql = `
+    SELECT 
+      id, 
+      invoice_number, 
+      bal_amt,
+      bal_after_receipts,
+      rate_cut_paid_amount, 
+      rate_cut_wt, 
+      rate_cut_amount,
+      net_bill_amount,
+      paid_amt,
+      receipts_amt,
+      account_name,
+      mobile,
+      transaction_status
+    FROM repair_details 
+    WHERE id = ?
+  `;
+  
+  db.query(sql, [id], (err, results) => {
+    if (err) {
+      console.error("Error fetching repair details by ID:", err);
+      return res.status(500).json({ message: "Error fetching data", error: err.message });
+    }
+
+    if (!results || results.length === 0) {
+      return res.status(404).json({ message: "No repair details found for the given ID" });
+    }
+
+    res.json(results[0]);
+  });
+};
+
 
 
 

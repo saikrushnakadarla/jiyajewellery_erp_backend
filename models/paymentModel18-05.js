@@ -1,4 +1,4 @@
-const db = require('../db');
+const db = require('../db'); // Assuming `db` is the MySQL connection object.
 
 const PaymentModel = {
    addPaymentAndUpdateRepair: (paymentData, discountAmt, cashAmt, paidWt, balWt, invoiceNumber, callback) => {
@@ -13,35 +13,21 @@ const PaymentModel = {
                     return callback(transactionErr);
                 }
 
-                // Remove weight-related fields from paymentData (total_wt, paid_wt, bal_wt)
-                // The paymentData array should have 16 fields, but we only need first 13
-                const sanitizedPaymentData = [
-                    paymentData[0], // transaction_type
-                    paymentData[1], // date
-                    paymentData[2], // mode
-                    paymentData[3], // cheque_number
-                    paymentData[4], // receipt_no
-                    paymentData[5], // account_name
-                    paymentData[6], // invoice_number
-                    paymentData[7], // total_amt
-                    paymentData[8], // discount_amt
-                    paymentData[9], // cash_amt
-                    paymentData[10], // remarks
-                    paymentData[15], // mobile (index 15)
-                    paymentData[13]  // category (index 13)
-                ];
+                // Convert empty values to 0 instead of null
+                const sanitizedPaymentData = paymentData.map(value =>
+                    value === "" || value === undefined ? 0 : value
+                );
 
                 const paymentQuery = `
                     INSERT INTO payments (
                         transaction_type, date, mode, cheque_number, receipt_no, 
-                        account_name, invoice_number, total_amt, discount_amt, cash_amt, remarks, mobile, category
+                        account_name, invoice_number, total_amt, discount_amt, cash_amt, remarks, total_wt, paid_wt, bal_wt, category, mobile
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )
                 `;
 
                 connection.query(paymentQuery, sanitizedPaymentData, (paymentErr, paymentResult) => {
                     if (paymentErr) {
-                        console.error("Payment insertion error:", paymentErr);
                         return connection.rollback(() => {
                             connection.release();
                             callback(paymentErr);
@@ -58,7 +44,6 @@ const PaymentModel = {
                         `;
                         connection.query(updateReceiptsAmtQuery, [discountAmt || 0, invoiceNumber], (updateReceiptsAmtErr) => {
                             if (updateReceiptsAmtErr) {
-                                console.error("Error updating receipts_amt:", updateReceiptsAmtErr);
                                 return connection.rollback(() => {
                                     connection.release();
                                     callback(updateReceiptsAmtErr);
@@ -72,7 +57,6 @@ const PaymentModel = {
                             `;
                             connection.query(updateBalAfterReceiptsQuery, [invoiceNumber], (updateBalAfterReceiptsErr) => {
                                 if (updateBalAfterReceiptsErr) {
-                                    console.error("Error updating bal_after_receipts:", updateBalAfterReceiptsErr);
                                     return connection.rollback(() => {
                                         connection.release();
                                         callback(updateBalAfterReceiptsErr);
@@ -81,7 +65,6 @@ const PaymentModel = {
 
                                 connection.commit((commitErr) => {
                                     if (commitErr) {
-                                        console.error("Commit error:", commitErr);
                                         return connection.rollback(() => {
                                             connection.release();
                                             callback(commitErr);
@@ -97,12 +80,12 @@ const PaymentModel = {
                         const updatePaidAmtQuery = `
                             UPDATE purchases
                             SET 
-                                paid_amt = COALESCE(paid_amt, 0) + ?
+                                paid_amt = COALESCE(paid_amt, 0) + ?,
+                                paid_wt = COALESCE(paid_wt, 0) + ?
                             WHERE invoice = ?
                         `;
-                        connection.query(updatePaidAmtQuery, [discountAmt || 0, invoiceNumber], (updatePaidAmtErr) => {
+                        connection.query(updatePaidAmtQuery, [discountAmt || 0, paidWt || 0, invoiceNumber], (updatePaidAmtErr) => {
                             if (updatePaidAmtErr) {
-                                console.error("Error updating paid_amt:", updatePaidAmtErr);
                                 return connection.rollback(() => {
                                     connection.release();
                                     callback(updatePaidAmtErr);
@@ -112,12 +95,13 @@ const PaymentModel = {
                             const updateBalanceDueQuery = `
                                 UPDATE purchases
                                 SET 
-                                    balance_after_receipt = balance_amount - paid_amt
+                                    balance_after_receipt = balance_amount - paid_amt,
+                                    balWt_after_payment = COALESCE(balance_pure_weight, 0) - COALESCE(paid_wt, 0),
+                                    bal_wt_amt = ?
                                 WHERE invoice = ?
                             `;
-                            connection.query(updateBalanceDueQuery, [invoiceNumber], (updateBalanceDueErr) => {
+                            connection.query(updateBalanceDueQuery, [balWt || 0, invoiceNumber], (updateBalanceDueErr) => {
                                 if (updateBalanceDueErr) {
-                                    console.error("Error updating balance_after_receipt:", updateBalanceDueErr);
                                     return connection.rollback(() => {
                                         connection.release();
                                         callback(updateBalanceDueErr);
@@ -126,7 +110,6 @@ const PaymentModel = {
 
                                 connection.commit((commitErr) => {
                                     if (commitErr) {
-                                        console.error("Commit error:", commitErr);
                                         return connection.rollback(() => {
                                             connection.release();
                                             callback(commitErr);
@@ -140,9 +123,10 @@ const PaymentModel = {
                         });
                     } else if (transactionType === 'Advance Receipt') {
                         // For Advance Receipt, just commit the transaction without updating any other tables
+                        // Only store the payment details in payments table
+                        
                         connection.commit((commitErr) => {
                             if (commitErr) {
-                                console.error("Commit error:", commitErr);
                                 return connection.rollback(() => {
                                     connection.release();
                                     callback(commitErr);
@@ -155,7 +139,6 @@ const PaymentModel = {
                     } else {
                         connection.commit((commitErr) => {
                             if (commitErr) {
-                                console.error("Commit error:", commitErr);
                                 return connection.rollback(() => {
                                     connection.release();
                                     callback(commitErr);
@@ -206,34 +189,21 @@ const PaymentModel = {
                     return callback(transactionErr);
                 }
 
-                // Remove weight-related fields from paymentData
-                const sanitizedPaymentData = [
-                    paymentData[0], // transaction_type
-                    paymentData[1], // date
-                    paymentData[2], // mode
-                    paymentData[3], // cheque_number
-                    paymentData[4], // receipt_no
-                    paymentData[5], // account_name
-                    paymentData[6], // invoice_number
-                    paymentData[7], // total_amt
-                    paymentData[8], // discount_amt
-                    paymentData[9], // cash_amt
-                    paymentData[10], // remarks
-                    paymentData[15], // mobile
-                    paymentData[13]  // category
-                ];
+                // Convert empty values to 0 instead of null
+                const sanitizedPaymentData = paymentData.map(value =>
+                    value === "" || value === undefined ? 0 : value
+                );
 
                 const paymentQuery = `
                     INSERT INTO payments (
                         transaction_type, date, mode, cheque_number, receipt_no, 
-                        account_name, invoice_number, total_amt, discount_amt, cash_amt, remarks, mobile, category
+                        account_name, invoice_number, total_amt, discount_amt, cash_amt, remarks, total_wt, paid_wt, bal_wt, category, mobile
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )
                 `;
 
                 connection.query(paymentQuery, sanitizedPaymentData, (paymentErr, paymentResult) => {
                     if (paymentErr) {
-                        console.error("Payment insertion error:", paymentErr);
                         return connection.rollback(() => {
                             connection.release();
                             callback(paymentErr);
@@ -250,11 +220,10 @@ const PaymentModel = {
                         `;
                         connection.query(updateReceiptsAmtQuery, [discountAmt || 0, invoiceNumber], (updateReceiptsAmtErr) => {
                             if (updateReceiptsAmtErr) {
-                                console.error("Error updating receipts_amt:", updateReceiptsAmtErr);
                                 return connection.rollback(() => {
                                     connection.release();
                                     callback(updateReceiptsAmtErr);
-                                });
+                                }); 
                             }
 
                             const updateBalAfterReceiptsQuery = `
@@ -264,7 +233,6 @@ const PaymentModel = {
                             `;
                             connection.query(updateBalAfterReceiptsQuery, [invoiceNumber], (updateBalAfterReceiptsErr) => {
                                 if (updateBalAfterReceiptsErr) {
-                                    console.error("Error updating bal_after_receipts:", updateBalAfterReceiptsErr);
                                     return connection.rollback(() => {
                                         connection.release();
                                         callback(updateBalAfterReceiptsErr);
@@ -273,7 +241,6 @@ const PaymentModel = {
 
                                 connection.commit((commitErr) => {
                                     if (commitErr) {
-                                        console.error("Commit error:", commitErr);
                                         return connection.rollback(() => {
                                             connection.release();
                                             callback(commitErr);
@@ -289,12 +256,12 @@ const PaymentModel = {
                         const updatePaidAmtQuery = `
                             UPDATE purchases
                             SET 
-                                paid_amt = COALESCE(paid_amt, 0) + ?
+                                paid_amt = COALESCE(paid_amt, 0) + ?,
+                                paid_wt = COALESCE(paid_wt, 0) + ?
                             WHERE invoice = ?
                         `;
-                        connection.query(updatePaidAmtQuery, [discountAmt || 0, invoiceNumber], (updatePaidAmtErr) => {
+                        connection.query(updatePaidAmtQuery, [discountAmt || 0, paidWt || 0, invoiceNumber], (updatePaidAmtErr) => {
                             if (updatePaidAmtErr) {
-                                console.error("Error updating paid_amt:", updatePaidAmtErr);
                                 return connection.rollback(() => {
                                     connection.release();
                                     callback(updatePaidAmtErr);
@@ -304,12 +271,13 @@ const PaymentModel = {
                             const updateBalanceDueQuery = `
                                 UPDATE purchases
                                 SET 
-                                    balance_after_receipt = balance_amount - paid_amt
+                                    balance_after_receipt = balance_amount - paid_amt,
+                                    balWt_after_payment = COALESCE(balance_pure_weight, 0) - COALESCE(paid_wt, 0),
+                                    bal_wt_amt = ?
                                 WHERE invoice = ?
                             `;
-                            connection.query(updateBalanceDueQuery, [invoiceNumber], (updateBalanceDueErr) => {
+                            connection.query(updateBalanceDueQuery, [balWt || 0, invoiceNumber], (updateBalanceDueErr) => {
                                 if (updateBalanceDueErr) {
-                                    console.error("Error updating balance_after_receipt:", updateBalanceDueErr);
                                     return connection.rollback(() => {
                                         connection.release();
                                         callback(updateBalanceDueErr);
@@ -318,7 +286,6 @@ const PaymentModel = {
 
                                 connection.commit((commitErr) => {
                                     if (commitErr) {
-                                        console.error("Commit error:", commitErr);
                                         return connection.rollback(() => {
                                             connection.release();
                                             callback(commitErr);
@@ -333,7 +300,6 @@ const PaymentModel = {
                     } else {
                         connection.commit((commitErr) => {
                             if (commitErr) {
-                                console.error("Commit error:", commitErr);
                                 return connection.rollback(() => {
                                     connection.release();
                                     callback(commitErr);
@@ -348,6 +314,8 @@ const PaymentModel = {
             });
         });
     },
+
+
 };
 
 module.exports = PaymentModel;

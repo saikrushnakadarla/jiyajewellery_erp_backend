@@ -1034,4 +1034,27 @@ exports.deleteOldItemsByInvoice = (invoiceNumber, callback) => {
     WHERE invoice_id = ?
   `;
   db.query(sql, [invoiceNumber], callback);
+}; 
+
+
+// Add this function to your existing model file
+exports.getRepairDetailsById = (id, callback) => {
+  const sql = `
+    SELECT 
+      id, 
+      invoice_number, 
+      bal_after_receipts, 
+      rate_cut_paid_amount, 
+      rate_cut_wt, 
+      rate_cut_amount,
+      net_bill_amount,
+      paid_amt,
+      receipts_amt,
+      account_name,
+      mobile,
+      transaction_status
+    FROM repair_details 
+    WHERE id = ?
+  `;
+  db.query(sql, [id], callback);
 };

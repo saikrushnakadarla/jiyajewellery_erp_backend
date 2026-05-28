@@ -2,8 +2,8 @@ const db = require('../db');
 
 const createStockPoint = (data, callback) => {
   const sql = `
-    INSERT INTO stock_points (stock_point_name, location, warehouse_id, description, status)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO stock_points (stock_point_name, location, warehouse_id, description, status, default_status)
+    VALUES (?, ?, ?, ?, ?, ?)
   `;
   
   db.query(sql, [
@@ -11,7 +11,8 @@ const createStockPoint = (data, callback) => {
     data.location,
     data.warehouse_id,
     data.description || null,
-    data.status || 'active'
+    data.status || 'active',
+    data.default_status || 'not_applied'
   ], callback);
 };
 
@@ -39,7 +40,6 @@ const getStockPointsByWarehouse = (callback) => {
   const sql = `
     SELECT * FROM warehouses 
     WHERE status = 'active'
-    
   `;
   db.query(sql, callback);
 };
@@ -51,7 +51,8 @@ const updateStockPointById = (id, data, callback) => {
         location = ?, 
         warehouse_id = ?, 
         description = ?, 
-        status = ?
+        status = ?,
+        default_status = ?
     WHERE stock_point_id = ?
   `;
   db.query(sql, [
@@ -60,6 +61,7 @@ const updateStockPointById = (id, data, callback) => {
     data.warehouse_id,
     data.description || null,
     data.status || 'active',
+    data.default_status || 'not_applied',
     id
   ], callback);
 };
@@ -85,6 +87,25 @@ const checkDuplicateStockPoint = (name, warehouseId, excludeId = null, callback)
   db.query(sql, params, callback);
 };
 
+// New functions for default status management
+const resetAllDefaultStatus = (callback) => {
+  const sql = `
+    UPDATE stock_points 
+    SET default_status = 'not_applied' 
+    WHERE default_status = 'applied'
+  `;
+  db.query(sql, callback);
+};
+
+const setDefaultStockPoint = (id, callback) => {
+  const sql = `
+    UPDATE stock_points 
+    SET default_status = 'applied' 
+    WHERE stock_point_id = ?
+  `;
+  db.query(sql, [id], callback);
+};
+
 module.exports = { 
   createStockPoint, 
   getAllStockPoints, 
@@ -92,5 +113,7 @@ module.exports = {
   getStockPointsByWarehouse,
   updateStockPointById, 
   deleteStockPointById,
-  checkDuplicateStockPoint
+  checkDuplicateStockPoint,
+  resetAllDefaultStatus,
+  setDefaultStockPoint
 };

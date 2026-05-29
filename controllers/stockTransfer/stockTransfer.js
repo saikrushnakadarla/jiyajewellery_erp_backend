@@ -123,3 +123,13 @@ exports.deleteStockTransfer = (req, res) => {
     res.json({ message: "Stock transfer deleted successfully" });
   });
 };
+
+exports.getLastTransferNumber = (req, res) => {
+  stockTransferModel.getLastTransferNumber((err, result) => {
+    if (err) {
+      console.error("Error fetching last transfer number:", err);
+      return res.status(500).json({ message: "Error fetching last transfer number" });
+    }
+    res.json({ lastTransferNumber: result });
+  });
+};

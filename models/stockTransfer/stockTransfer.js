@@ -16,14 +16,14 @@ exports.insert = (
     return callback(new Error("Invalid transfer_data array"));
   }
 
-  // Generate transfer number
+  // Generate transfer number if not provided
   const generateTransferNumber = () => {
     const date = new Date();
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
     const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    return `TRF${year}${month}${day}${random}`;
+    return `STF${year}${month}${day}${random}`;
   };
 
   const transfer_number = reference_number || generateTransferNumber();
@@ -73,7 +73,7 @@ exports.insert = (
     totalQuantity,
     totalGrossWeight,
     totalNetWeight,
-    'pending',
+    'completed',
     remarks || null,
     created_by || null
   ];
@@ -273,4 +273,33 @@ exports.getByStatus = (status, callback) => {
     ORDER BY st.created_at DESC
   `;
   db.query(sql, [status], callback);
+};
+
+exports.getLastTransferNumber = (callback) => {
+  const sql = `
+    SELECT transfer_number FROM stock_transfers 
+    ORDER BY transfer_id DESC 
+    LIMIT 1
+  `;
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("Error fetching last transfer number:", err);
+      return callback(err);
+    }
+    
+    if (results.length === 0) {
+      return callback(null, "STF001");
+    }
+    
+    const lastNumber = results[0].transfer_number;
+    // Extract numeric part and increment
+    const match = lastNumber.match(/STF(\d+)/);
+    if (match) {
+      const num = parseInt(match[1]) + 1;
+      const newNumber = `STF${String(num).padStart(3, '0')}`;
+      callback(null, newNumber);
+    } else {
+      callback(null, "STF001");
+    }
+  });
 };

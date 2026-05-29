@@ -88,48 +88,52 @@ exports.insert = (
 
     // Insert transfer items
     const insertItemsSql = `
-      INSERT INTO stock_transfer_items (
-        transfer_id,
-        product_id,
-        product_name,
-        metal_type,
-        purity,
-        category,
-        sub_category,
-        design_name,
-        qty,
-        gross_weight,
-        stone_weight,
-        net_weight,
-        rate,
-        making_charges,
-        stone_price,
-        total_price,
-        remarks,
-        created_at
-      ) VALUES ?
-    `;
+  INSERT INTO stock_transfer_items (
+    transfer_id,
+    product_id,
+    PCode_BarCode,   
+    product_name,
+    metal_type,
+    purity,
+    category,
+    sub_category,
+    design_name,
+    qty,
+    gross_weight,
+    stone_weight,
+    net_weight,
+    rate,
+    making_charges,
+    stone_price,
+    total_price,
+    remarks,
+    created_at
+  ) VALUES ?
+`;
 
-    const itemValues = transfer_data.map(item => [
-      transferId,
-      item.product_id || null,
-      item.product_name || null,
-      item.metal_type || null,
-      item.purity || null,
-      item.category || null,
-      item.sub_category || null,
-      item.design_name || null,
-      parseFloat(item.qty) || 0,
-      parseFloat(item.gross_weight) || 0,
-      parseFloat(item.stone_weight) || 0,
-      parseFloat(item.net_weight) || 0,
-      parseFloat(item.rate) || 0,
-      parseFloat(item.making_charges) || 0,
-      parseFloat(item.stone_price) || 0,
-      parseFloat(item.total_price) || 0,
-      item.remarks || null,
-      new Date()
-    ]);
+// Update the itemValues mapping to include PCode_BarCode
+const itemValues = transfer_data.map(item => [
+  transferId,
+  item.product_id || null,
+  item.PCode_BarCode || null,  // 👈 ADD THIS LINE - IMPORTANT
+  item.product_name || null,
+  item.metal_type || null,
+  item.purity || null,
+  item.category || null,
+  item.sub_category || null,
+  item.design_name || null,
+  parseFloat(item.qty) || 0,
+  parseFloat(item.gross_weight) || 0,
+  parseFloat(item.stone_weight) || 0,
+  parseFloat(item.net_weight) || 0,
+  parseFloat(item.rate) || 0,
+  parseFloat(item.making_charges) || 0,
+  parseFloat(item.stone_price) || 0,
+  parseFloat(item.total_price) || 0,
+  item.remarks || null,
+  new Date()
+]);
+
 
     db.query(insertItemsSql, [itemValues], (itemsErr) => {
       if (itemsErr) {
@@ -301,5 +305,50 @@ exports.getLastTransferNumber = (callback) => {
     } else {
       callback(null, "STF001");
     }
+  });
+};
+
+
+// Add this function to update stock point for transferred products
+exports.updateStockPointForTransfer = (productCodes, toStockPointId, callback) => {
+  if (!productCodes || productCodes.length === 0) {
+    return callback(null, { message: "No products to update" });
+  }
+
+  // First get the stock point name from stock_points table
+  const getStockPointSql = `
+    SELECT stock_point_name FROM stock_points 
+    WHERE stock_point_id = ?
+  `;
+
+  db.query(getStockPointSql, [toStockPointId], (err, stockPointResult) => {
+    if (err) {
+      console.error("Error fetching stock point:", err);
+      return callback(err);
+    }
+
+    if (stockPointResult.length === 0) {
+      return callback(new Error("Stock point not found"));
+    }
+
+    const stockPointName = stockPointResult[0].stock_point_name;
+
+    // Update opening_tags_entry table with new stock point
+    const placeholders = productCodes.map(() => '?').join(',');
+    const updateSql = `
+      UPDATE opening_tags_entry 
+      SET Stock_Point = ? 
+      WHERE PCode_BarCode IN (${placeholders})
+    `;
+
+    const params = [stockPointName, ...productCodes];
+
+    db.query(updateSql, params, (updateErr, result) => {
+      if (updateErr) {
+        console.error("Error updating stock point:", updateErr);
+        return callback(updateErr);
+      }
+      callback(null, { updatedCount: result.affectedRows });
+    });
   });
 };

@@ -2,8 +2,8 @@ const db = require('../db');
 
 const createStockPoint = (data, callback) => {
   const sql = `
-    INSERT INTO stock_points (stock_point_name, location, warehouse_id, description, status, default_status)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO stock_points (stock_point_name, location, warehouse_id, description, user_name, password, status, default_status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `;
   
   db.query(sql, [
@@ -11,6 +11,8 @@ const createStockPoint = (data, callback) => {
     data.location,
     data.warehouse_id,
     data.description || null,
+    data.user_name || null,
+    data.password || null,
     data.status || 'active',
     data.default_status || 'not_applied'
   ], callback);
@@ -45,25 +47,38 @@ const getStockPointsByWarehouse = (callback) => {
 };
 
 const updateStockPointById = (id, data, callback) => {
-  const sql = `
+  // Build dynamic SQL for update (to handle optional password update)
+  let sql = `
     UPDATE stock_points 
     SET stock_point_name = ?, 
         location = ?, 
         warehouse_id = ?, 
         description = ?, 
+        user_name = ?,
         status = ?,
         default_status = ?
-    WHERE stock_point_id = ?
   `;
-  db.query(sql, [
+  
+  const params = [
     data.stock_point_name,
     data.location,
     data.warehouse_id,
     data.description || null,
+    data.user_name || null,
     data.status || 'active',
-    data.default_status || 'not_applied',
-    id
-  ], callback);
+    data.default_status || 'not_applied'
+  ];
+  
+  // Only update password if provided
+  if (data.password) {
+    sql += `, password = ?`;
+    params.push(data.password);
+  }
+  
+  sql += ` WHERE stock_point_id = ?`;
+  params.push(id);
+  
+  db.query(sql, params, callback);
 };
 
 const deleteStockPointById = (id, callback) => {
@@ -87,7 +102,6 @@ const checkDuplicateStockPoint = (name, warehouseId, excludeId = null, callback)
   db.query(sql, params, callback);
 };
 
-// New functions for default status management
 const resetAllDefaultStatus = (callback) => {
   const sql = `
     UPDATE stock_points 

@@ -22,6 +22,9 @@ exports.saveStockTransfer = (req, res) => {
       return res.status(400).json({ message: "From and To warehouses are required" });
     }
 
+    // Extract product codes from transfer_data for stock point update
+    const productCodes = transfer_data.map(item => item.PCode_BarCode).filter(code => code);
+
     stockTransferModel.insert(
       transfer_data,
       from_warehouse_id,
@@ -37,11 +40,30 @@ exports.saveStockTransfer = (req, res) => {
           console.error("Database error:", err);
           return res.status(500).json({ message: "Error saving stock transfer data", error: err });
         }
-        res.json({ 
-          message: "Stock transfer completed successfully", 
-          transfer_id: result.transfer_id,
-          transfer_number: result.transfer_number
-        });
+        
+        // After successful transfer, update stock points in opening_tags_entry
+        if (productCodes.length > 0 && to_stock_point_id) {
+          stockTransferModel.updateStockPointForTransfer(productCodes, to_stock_point_id, (updateErr, updateResult) => {
+            if (updateErr) {
+              console.error("Error updating stock points:", updateErr);
+              // Don't fail the whole transaction, just log the error
+            }
+            console.log(`Updated stock point for ${updateResult?.updatedCount || 0} products`);
+            
+            res.json({ 
+              message: "Stock transfer completed successfully", 
+              transfer_id: result.transfer_id,
+              transfer_number: result.transfer_number,
+              stock_points_updated: updateResult?.updatedCount || 0
+            });
+          });
+        } else {
+          res.json({ 
+            message: "Stock transfer completed successfully", 
+            transfer_id: result.transfer_id,
+            transfer_number: result.transfer_number
+          });
+        }
       }
     );
   } catch (error) {
@@ -121,5 +143,15 @@ exports.deleteStockTransfer = (req, res) => {
     }
 
     res.json({ message: "Stock transfer deleted successfully" });
+  });
+};
+
+exports.getLastTransferNumber = (req, res) => {
+  stockTransferModel.getLastTransferNumber((err, result) => {
+    if (err) {
+      console.error("Error fetching last transfer number:", err);
+      return res.status(500).json({ message: "Error fetching last transfer number" });
+    }
+    res.json({ lastTransferNumber: result });
   });
 };

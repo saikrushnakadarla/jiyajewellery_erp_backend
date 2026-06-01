@@ -8,5 +8,6 @@ router.get("/get-stock-transfers", stockTransferController.getAllStockTransfers)
 router.get("/get-stock-transfer/:transfer_id", stockTransferController.getStockTransferById);
 router.put("/update-stock-transfer/:transfer_id", stockTransferController.updateStockTransfer);
 router.delete("/delete-stock-transfer/:transfer_id", stockTransferController.deleteStockTransfer);
+router.get("/lastTransferNumber", stockTransferController.getLastTransferNumber);
 
 module.exports = router;

@@ -10,8 +10,21 @@ exports.insert = (
   reference_number,
   remarks,
   created_by,
+  from_user_id = null,
+  to_user_id = null,
   callback
 ) => {
+  // Handle callback as 11th parameter (if 11 args, last is callback)
+  if (typeof from_user_id === 'function') {
+    callback = from_user_id;
+    from_user_id = null;
+    to_user_id = null;
+  }
+  if (typeof to_user_id === 'function' && callback) {
+    callback = to_user_id;
+    to_user_id = null;
+  }
+
   if (!Array.isArray(transfer_data) || transfer_data.length === 0) {
     return callback(new Error("Invalid transfer_data array"));
   }
@@ -41,7 +54,7 @@ exports.insert = (
     totalNetWeight += parseFloat(item.net_weight) || 0;
   });
 
-  // Insert main transfer record
+  // Insert main transfer record with from_user_id and to_user_id
   const insertTransferSql = `
     INSERT INTO stock_transfers (
       transfer_number,
@@ -49,6 +62,8 @@ exports.insert = (
       to_warehouse_id,
       from_stock_point_id,
       to_stock_point_id,
+      from_user_id,
+      to_user_id,
       transfer_date,
       total_items,
       total_quantity,
@@ -59,7 +74,7 @@ exports.insert = (
       created_by,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
   `;
 
   const transferParams = [
@@ -68,6 +83,8 @@ exports.insert = (
     to_warehouse_id,
     from_stock_point_id || null,
     to_stock_point_id || null,
+    from_user_id || null,
+    to_user_id || null,
     transfer_date_formatted,
     totalItems,
     totalQuantity,
@@ -88,52 +105,50 @@ exports.insert = (
 
     // Insert transfer items
     const insertItemsSql = `
-  INSERT INTO stock_transfer_items (
-    transfer_id,
-    product_id,
-    PCode_BarCode,   
-    product_name,
-    metal_type,
-    purity,
-    category,
-    sub_category,
-    design_name,
-    qty,
-    gross_weight,
-    stone_weight,
-    net_weight,
-    rate,
-    making_charges,
-    stone_price,
-    total_price,
-    remarks,
-    created_at
-  ) VALUES ?
-`;
+      INSERT INTO stock_transfer_items (
+        transfer_id,
+        product_id,
+        PCode_BarCode,   
+        product_name,
+        metal_type,
+        purity,
+        category,
+        sub_category,
+        design_name,
+        qty,
+        gross_weight,
+        stone_weight,
+        net_weight,
+        rate,
+        making_charges,
+        stone_price,
+        total_price,
+        remarks,
+        created_at
+      ) VALUES ?
+    `;
 
-// Update the itemValues mapping to include PCode_BarCode
-const itemValues = transfer_data.map(item => [
-  transferId,
-  item.product_id || null,
-  item.PCode_BarCode || null,  // 👈 ADD THIS LINE - IMPORTANT
-  item.product_name || null,
-  item.metal_type || null,
-  item.purity || null,
-  item.category || null,
-  item.sub_category || null,
-  item.design_name || null,
-  parseFloat(item.qty) || 0,
-  parseFloat(item.gross_weight) || 0,
-  parseFloat(item.stone_weight) || 0,
-  parseFloat(item.net_weight) || 0,
-  parseFloat(item.rate) || 0,
-  parseFloat(item.making_charges) || 0,
-  parseFloat(item.stone_price) || 0,
-  parseFloat(item.total_price) || 0,
-  item.remarks || null,
-  new Date()
-]);
-
+    const itemValues = transfer_data.map(item => [
+      transferId,
+      item.product_id || null,
+      item.PCode_BarCode || null,
+      item.product_name || null,
+      item.metal_type || null,
+      item.purity || null,
+      item.category || null,
+      item.sub_category || null,
+      item.design_name || null,
+      parseFloat(item.qty) || 0,
+      parseFloat(item.gross_weight) || 0,
+      parseFloat(item.stone_weight) || 0,
+      parseFloat(item.net_weight) || 0,
+      parseFloat(item.rate) || 0,
+      parseFloat(item.making_charges) || 0,
+      parseFloat(item.stone_price) || 0,
+      parseFloat(item.total_price) || 0,
+      item.remarks || null,
+      new Date()
+    ]);
 
     db.query(insertItemsSql, [itemValues], (itemsErr) => {
       if (itemsErr) {
@@ -153,7 +168,9 @@ exports.getAll = (callback) => {
       w1.warehouse_name as from_warehouse_name,
       w2.warehouse_name as to_warehouse_name,
       sp1.stock_point_name as from_stock_point_name,
-      sp2.stock_point_name as to_stock_point_name
+      sp2.stock_point_name as to_stock_point_name,
+      sp1.user_id as from_user_id_value,
+      sp2.user_id as to_user_id_value
     FROM stock_transfers st
     LEFT JOIN warehouses w1 ON st.from_warehouse_id = w1.warehouse_id
     LEFT JOIN warehouses w2 ON st.to_warehouse_id = w2.warehouse_id
@@ -171,7 +188,9 @@ exports.getById = (transfer_id, callback) => {
       w1.warehouse_name as from_warehouse_name,
       w2.warehouse_name as to_warehouse_name,
       sp1.stock_point_name as from_stock_point_name,
-      sp2.stock_point_name as to_stock_point_name
+      sp2.stock_point_name as to_stock_point_name,
+      sp1.user_id as from_user_id_value,
+      sp2.user_id as to_user_id_value
     FROM stock_transfers st
     LEFT JOIN warehouses w1 ON st.from_warehouse_id = w1.warehouse_id
     LEFT JOIN warehouses w2 ON st.to_warehouse_id = w2.warehouse_id
@@ -248,7 +267,9 @@ exports.getByDateRange = (start_date, end_date, callback) => {
       w1.warehouse_name as from_warehouse_name,
       w2.warehouse_name as to_warehouse_name,
       sp1.stock_point_name as from_stock_point_name,
-      sp2.stock_point_name as to_stock_point_name
+      sp2.stock_point_name as to_stock_point_name,
+      sp1.user_id as from_user_id_value,
+      sp2.user_id as to_user_id_value
     FROM stock_transfers st
     LEFT JOIN warehouses w1 ON st.from_warehouse_id = w1.warehouse_id
     LEFT JOIN warehouses w2 ON st.to_warehouse_id = w2.warehouse_id
@@ -267,7 +288,9 @@ exports.getByStatus = (status, callback) => {
       w1.warehouse_name as from_warehouse_name,
       w2.warehouse_name as to_warehouse_name,
       sp1.stock_point_name as from_stock_point_name,
-      sp2.stock_point_name as to_stock_point_name
+      sp2.stock_point_name as to_stock_point_name,
+      sp1.user_id as from_user_id_value,
+      sp2.user_id as to_user_id_value
     FROM stock_transfers st
     LEFT JOIN warehouses w1 ON st.from_warehouse_id = w1.warehouse_id
     LEFT JOIN warehouses w2 ON st.to_warehouse_id = w2.warehouse_id
@@ -308,16 +331,15 @@ exports.getLastTransferNumber = (callback) => {
   });
 };
 
-
-// Add this function to update stock point for transferred products
+// Updated function to update stock point AND user_id for transferred products
 exports.updateStockPointForTransfer = (productCodes, toStockPointId, callback) => {
   if (!productCodes || productCodes.length === 0) {
     return callback(null, { message: "No products to update" });
   }
 
-  // First get the stock point name from stock_points table
+  // First get the stock point name and user_id from stock_points table
   const getStockPointSql = `
-    SELECT stock_point_name FROM stock_points 
+    SELECT stock_point_name, user_id FROM stock_points 
     WHERE stock_point_id = ?
   `;
 
@@ -332,22 +354,24 @@ exports.updateStockPointForTransfer = (productCodes, toStockPointId, callback) =
     }
 
     const stockPointName = stockPointResult[0].stock_point_name;
+    const userId = stockPointResult[0].user_id;
 
-    // Update opening_tags_entry table with new stock point
+    // Update opening_tags_entry table with new stock point and user_id
     const placeholders = productCodes.map(() => '?').join(',');
     const updateSql = `
       UPDATE opening_tags_entry 
-      SET Stock_Point = ? 
+      SET Stock_Point = ?, user_id = ? 
       WHERE PCode_BarCode IN (${placeholders})
     `;
 
-    const params = [stockPointName, ...productCodes];
+    const params = [stockPointName, userId, ...productCodes];
 
     db.query(updateSql, params, (updateErr, result) => {
       if (updateErr) {
-        console.error("Error updating stock point:", updateErr);
+        console.error("Error updating stock point and user_id:", updateErr);
         return callback(updateErr);
       }
+      console.log(`Updated stock point to '${stockPointName}' and user_id to ${userId} for ${result.affectedRows} products`);
       callback(null, { updatedCount: result.affectedRows });
     });
   });

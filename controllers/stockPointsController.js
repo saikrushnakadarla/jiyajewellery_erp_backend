@@ -1,5 +1,5 @@
 const stockPointsModel = require('../models/stockPointsModel');
-const bcrypt = require('bcrypt'); // Add this for password hashing (optional but recommended)
+const bcrypt = require('bcrypt');
 
 const saltRounds = 10;
 
@@ -24,36 +24,46 @@ const createStockPoint = (req, res) => {
       });
     }
     
-    // Hash password if provided
-    let hashedPassword = null;
-    if (password) {
-      try {
-        hashedPassword = await bcrypt.hash(password, saltRounds);
-      } catch (hashErr) {
-        console.error('Error hashing password:', hashErr);
-        return res.status(500).send({ message: 'Error processing password' });
-      }
-    }
-    
-    const stockPointData = { 
-      stock_point_name, 
-      location, 
-      warehouse_id, 
-      description, 
-      user_name,
-      password: hashedPassword,
-      status,
-      default_status: default_status || 'not_applied'
-    };
-    
-    stockPointsModel.createStockPoint(stockPointData, (err, result) => {
+    // Get next user_id (increment by 2)
+    stockPointsModel.getNextUserId(async (err, nextUserId) => {
       if (err) {
         console.error(err);
-        return res.status(500).send({ message: 'Error inserting data' });
+        return res.status(500).send({ message: 'Error generating user ID' });
       }
-      res.status(201).send({ 
-        id: result.insertId, 
-        message: 'Stock point created successfully' 
+      
+      // Hash password if provided
+      let hashedPassword = null;
+      if (password) {
+        try {
+          hashedPassword = await bcrypt.hash(password, saltRounds);
+        } catch (hashErr) {
+          console.error('Error hashing password:', hashErr);
+          return res.status(500).send({ message: 'Error processing password' });
+        }
+      }
+      
+      const stockPointData = { 
+        stock_point_name, 
+        location, 
+        warehouse_id, 
+        description, 
+        user_id: nextUserId,  // Add the auto-generated user_id
+        user_name,
+        password: hashedPassword,
+        status,
+        default_status: default_status || 'not_applied'
+      };
+      
+      stockPointsModel.createStockPoint(stockPointData, (err, result) => {
+        if (err) {
+          console.error(err);
+          return res.status(500).send({ message: 'Error inserting data' });
+        }
+        res.status(201).send({ 
+          id: result.insertId, 
+          user_id: nextUserId,
+          message: 'Stock point created successfully' 
+        });
       });
     });
   });
@@ -125,34 +135,43 @@ const updateStockPointById = (req, res) => {
       });
     }
     
-    // Hash password if provided and not empty
-    let hashedPassword = null;
-    if (password && password.trim() !== '') {
-      try {
-        hashedPassword = await bcrypt.hash(password, saltRounds);
-      } catch (hashErr) {
-        console.error('Error hashing password:', hashErr);
-        return res.status(500).send({ message: 'Error processing password' });
-      }
-    }
-    
-    const stockPointData = { 
-      stock_point_name, 
-      location, 
-      warehouse_id, 
-      description, 
-      user_name,
-      password: hashedPassword,
-      status,
-      default_status
-    };
-    
-    stockPointsModel.updateStockPointById(id, stockPointData, (err, result) => {
+    // First get existing user_id
+    stockPointsModel.getStockPointById(id, async (err, existingData) => {
       if (err) {
         console.error(err);
-        return res.status(500).send({ message: 'Error updating data' });
+        return res.status(500).send({ message: 'Error fetching existing data' });
       }
-      res.status(200).send({ message: 'Stock point updated successfully' });
+      
+      // Hash password if provided and not empty
+      let hashedPassword = null;
+      if (password && password.trim() !== '') {
+        try {
+          hashedPassword = await bcrypt.hash(password, saltRounds);
+        } catch (hashErr) {
+          console.error('Error hashing password:', hashErr);
+          return res.status(500).send({ message: 'Error processing password' });
+        }
+      }
+      
+      const stockPointData = { 
+        stock_point_name, 
+        location, 
+        warehouse_id, 
+        description, 
+        user_id: existingData[0]?.user_id || null,  // Keep existing user_id
+        user_name,
+        password: hashedPassword,
+        status,
+        default_status
+      };
+      
+      stockPointsModel.updateStockPointById(id, stockPointData, (err, result) => {
+        if (err) {
+          console.error(err);
+          return res.status(500).send({ message: 'Error updating data' });
+        }
+        res.status(200).send({ message: 'Stock point updated successfully' });
+      });
     });
   });
 };

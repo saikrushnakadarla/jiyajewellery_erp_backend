@@ -2,8 +2,8 @@ const db = require('../db');
 
 const createStockPoint = (data, callback) => {
   const sql = `
-    INSERT INTO stock_points (stock_point_name, location, warehouse_id, description, user_name, password, status, default_status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO stock_points (stock_point_name, location, warehouse_id, description, user_id, user_name, password, status, default_status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   
   db.query(sql, [
@@ -11,6 +11,7 @@ const createStockPoint = (data, callback) => {
     data.location,
     data.warehouse_id,
     data.description || null,
+    data.user_id || null,
     data.user_name || null,
     data.password || null,
     data.status || 'active',
@@ -47,13 +48,14 @@ const getStockPointsByWarehouse = (callback) => {
 };
 
 const updateStockPointById = (id, data, callback) => {
-  // Build dynamic SQL for update (to handle optional password update)
+  // Build dynamic SQL for update
   let sql = `
     UPDATE stock_points 
     SET stock_point_name = ?, 
         location = ?, 
         warehouse_id = ?, 
         description = ?, 
+        user_id = ?,
         user_name = ?,
         status = ?,
         default_status = ?
@@ -64,6 +66,7 @@ const updateStockPointById = (id, data, callback) => {
     data.location,
     data.warehouse_id,
     data.description || null,
+    data.user_id || null,
     data.user_name || null,
     data.status || 'active',
     data.default_status || 'not_applied'
@@ -102,6 +105,15 @@ const checkDuplicateStockPoint = (name, warehouseId, excludeId = null, callback)
   db.query(sql, params, callback);
 };
 
+const getNextUserId = (callback) => {
+  const sql = `
+    SELECT MAX(user_id) as max_user_id 
+    FROM stock_points 
+    WHERE user_id IS NOT NULL
+  `;
+  db.query(sql, callback);
+};
+
 const resetAllDefaultStatus = (callback) => {
   const sql = `
     UPDATE stock_points 
@@ -128,6 +140,7 @@ module.exports = {
   updateStockPointById, 
   deleteStockPointById,
   checkDuplicateStockPoint,
+  getNextUserId,
   resetAllDefaultStatus,
   setDefaultStockPoint
 };

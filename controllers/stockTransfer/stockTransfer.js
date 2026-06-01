@@ -11,7 +11,9 @@ exports.saveStockTransfer = (req, res) => {
       transfer_date,
       reference_number,
       remarks,
-      created_by 
+      created_by,
+      from_user_id,
+      to_user_id
     } = req.body;
 
     if (!transfer_data || !Array.isArray(transfer_data) || transfer_data.length === 0) {
@@ -35,6 +37,8 @@ exports.saveStockTransfer = (req, res) => {
       reference_number,
       remarks,
       created_by,
+      from_user_id,
+      to_user_id,
       (err, result) => {
         if (err) {
           console.error("Database error:", err);

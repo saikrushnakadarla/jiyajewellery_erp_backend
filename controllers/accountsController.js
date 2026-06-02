@@ -11,7 +11,8 @@ const createAccount = async (req, res) => {
         res.status(201).json({ 
             message: 'Account created successfully', 
             account_id: result.insertId,
-            customer_id: result.customer_id  // Return customer_id in response
+            customer_id: result.customer_id,
+            user_id: data.user_id  // Return user_id in response
         });
     } catch (err) {
         console.error('Error inserting into account_details:', err.message);

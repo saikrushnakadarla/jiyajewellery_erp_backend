@@ -37,7 +37,7 @@ const upload = multer({
   fileFilter: fileFilter
 });
 
-// Function to generate next customer ID
+// Function to generate next customer ID (only for CUSTOMERS, not for SALESMAN)
 const generateCustomerId = () => {
   return new Promise((resolve, reject) => {
     const sql = "SELECT customer_id FROM account_details WHERE account_group = 'CUSTOMERS' AND customer_id IS NOT NULL ORDER BY account_id DESC LIMIT 1";
@@ -66,8 +66,10 @@ const generateCustomerId = () => {
 const createAccount = async (data, files) => {
   return new Promise(async (resolve, reject) => {
     try {
-      // Generate customer_id only for CUSTOMERS group
+      // Generate customer_id only for CUSTOMERS group, not for SALESMAN
       let customerId = null;
+      let userId = data.user_id || null;
+      
       if (data.account_group === 'CUSTOMERS') {
         customerId = await generateCustomerId();
       }
@@ -86,8 +88,9 @@ const createAccount = async (data, files) => {
           account_name, print_name, account_group, op_bal, metal_balance, dr_cr,
           address1, address2, city, pincode, state, state_code,
           phone, mobile, contact_person, email, birthday, anniversary,
-          bank_account_no, bank_name, ifsc_code, branch, gst_in, aadhar_card, pan_card, religion, images, customer_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+          bank_account_no, bank_name, ifsc_code, branch, gst_in, aadhar_card, pan_card, religion, images, 
+          customer_id, user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
       const values = [
           data.account_name, data.print_name, data.account_group, data.op_bal || null, 
@@ -98,14 +101,15 @@ const createAccount = async (data, files) => {
           data.email || null, data.birthday || null, data.anniversary || null,
           data.bank_account_no || null, data.bank_name || null, data.ifsc_code || null, 
           data.branch || null, data.gst_in || null, data.aadhar_card || null, 
-          data.pan_card || null, data.religion || null, imageData, customerId
+          data.pan_card || null, data.religion || null, imageData, 
+          customerId, userId
       ];
 
       db.query(sql, values, (err, result) => {
         if (err) {
           reject(err);
         } else {
-          resolve({ insertId: result.insertId, customer_id: customerId });
+          resolve({ insertId: result.insertId, customer_id: customerId, user_id: userId });
         }
       });
     } catch (error) {

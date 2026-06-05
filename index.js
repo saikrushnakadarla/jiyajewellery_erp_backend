@@ -50,6 +50,7 @@ const stockPointsRoutes = require("./routes/stockPointsRoutes");
 const warehouseRoutes = require("./routes/warehouseRoutes")
 const stockTransferRoutes = require("./routes/stockTransferRoutes");
 const assignedSalesmanRoutes = require("./routes/assignedSalesmanRoutes");
+const receivedSalesmanRoutes = require("./routes/receivedSalesmanRoutes");
 
 
 const app = express();
@@ -110,6 +111,7 @@ app.use('/api', stockPointsRoutes);
 app.use('/', warehouseRoutes);
 app.use("/api/stock-transfer", stockTransferRoutes);
 app.use("/api/assigned-salesman", assignedSalesmanRoutes);
+app.use("/api/received-salesman", receivedSalesmanRoutes);
 
 // Start the server
 app.listen(PORT, () => {

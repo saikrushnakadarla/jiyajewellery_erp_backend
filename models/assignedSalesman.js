@@ -399,3 +399,44 @@ exports.getByStatus = (status, callback) => {
   `;
   db.query(sql, [status], callback);
 };
+
+
+// Add this new model method
+exports.getProductsBySalesman = (salesman_id, callback) => {
+  const sql = `
+    SELECT 
+      asi.item_id,
+      asi.assigned_id,
+      asi.product_id,
+      asi.PCode_BarCode,
+      asi.product_name,
+      asi.metal_type,
+      asi.purity,
+      asi.category,
+      asi.sub_category,
+      asi.design_name,
+      asi.qty,
+      asi.gross_weight,
+      asi.stone_weight,
+      asi.net_weight,
+      asi.rate,
+      asi.making_charges,
+      asi.stone_price,
+      asi.total_price,
+      ast.transfer_date,
+      ast.status as transfer_status
+    FROM assigned_salesman_items asi
+    INNER JOIN assigned_salesman_transfers ast ON asi.assigned_id = ast.assigned_id
+    WHERE ast.to_salesman_id = ? 
+      AND ast.status = 'completed'
+    ORDER BY ast.transfer_date DESC, asi.item_id ASC
+  `;
+  
+  db.query(sql, [salesman_id], (err, results) => {
+    if (err) {
+      console.error("Error fetching products by salesman:", err);
+      return callback(err);
+    }
+    callback(null, results);
+  });
+};

@@ -189,3 +189,20 @@ exports.updateStatus = (req, res) => {
     res.json({ message: "Status updated successfully" });
   });
 };
+
+
+exports.getAssignedProductsBySalesman = (req, res) => {
+  const { salesman_id } = req.query;
+  
+  if (!salesman_id) {
+    return res.status(400).json({ message: "Salesman ID is required" });
+  }
+  
+  assignedSalesmanModel.getProductsBySalesman(salesman_id, (err, results) => {
+    if (err) {
+      console.error("Error fetching assigned products:", err);
+      return res.status(500).json({ message: "Error fetching assigned products" });
+    }
+    res.json(results);
+  });
+};

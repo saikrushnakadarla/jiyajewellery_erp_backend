@@ -11,5 +11,6 @@ router.delete("/delete-assigned-transfer/:transfer_id", assignedSalesmanControll
 router.get("/lastAssignedNumber", assignedSalesmanController.getLastAssignedNumber);
 router.get("/get-salesmen", assignedSalesmanController.getSalesmen);
 router.put("/update-status/:transfer_id", assignedSalesmanController.updateStatus);
+router.get("/get-assigned-products-by-salesman", assignedSalesmanController.getAssignedProductsBySalesman);
 
 module.exports = router;

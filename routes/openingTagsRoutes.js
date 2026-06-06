@@ -9,6 +9,9 @@ router.get('/get/opening-tags-entry', openingTagsController.getOpeningTags);
 router.put('/update/opening-tags-entry/:id', openingTagsController.updateOpeningTag);
 router.delete('/delete/opening-tags-entry/:opentag_id', openingTagsController.deleteOpeningTag);
 
+// Add this new route
+router.put('/update-opening-tags-status', openingTagsController.updateOpeningTagsStatus);
+
 
 router.post('/post/subcategory', openingTagsController.createSubcategory);
 router.get('/get/subcategories', openingTagsController.getAllSubcategories);

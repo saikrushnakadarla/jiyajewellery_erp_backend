@@ -385,6 +385,38 @@ const getNextPCodeBarCode = (req, res) => {
     });
 };
 
+
+const updateOpeningTagsStatus = (req, res) => {
+    const { barcodes, status, stock_point } = req.body;
+    
+    if (!barcodes || !Array.isArray(barcodes) || barcodes.length === 0) {
+        return res.status(400).json({ error: "Invalid barcodes array" });
+    }
+    
+    if (!status) {
+        return res.status(400).json({ error: "Status is required" });
+    }
+    
+    // Create placeholders for SQL query
+    const placeholders = barcodes.map(() => '?').join(',');
+    const sql = `UPDATE opening_tags_entry SET Status = ?, Stock_Point = ? WHERE PCode_BarCode IN (${placeholders})`;
+    
+    const values = [status, stock_point || "MAIN STOCK ROOM", ...barcodes];
+    
+    db.query(sql, values, (err, result) => {
+        if (err) {
+            console.error("Database error updating opening tags:", err);
+            return res.status(500).json({ error: "Database update failed", details: err });
+        }
+        
+        res.status(200).json({ 
+            message: "Opening tags updated successfully", 
+            affectedRows: result.affectedRows 
+        });
+    });
+};
+
+// Make sure to export it
 module.exports = {
     createSubcategory,
     getAllSubcategories,
@@ -395,4 +427,5 @@ module.exports = {
     getLastPcode,
     getNextPCodeBarCode,
     deleteOpeningTag,
+    updateOpeningTagsStatus 
 };

@@ -62,7 +62,7 @@ const generateCustomerId = () => {
   });
 };
 
-// Insert new account record
+// Insert new account record - FIXED SQL with correct number of placeholders
 const createAccount = async (data, files) => {
   return new Promise(async (resolve, reject) => {
     try {
@@ -84,35 +84,70 @@ const createAccount = async (data, files) => {
         imageData = JSON.stringify(images);
       }
       
+      // FIXED: Count the columns - 32 columns total
+      // Columns: account_name, print_name, account_group, op_bal, metal_balance, dr_cr,
+      // address1, address2, city, pincode, state, state_code,
+      // phone, mobile, contact_person, email, birthday, anniversary,
+      // bank_account_no, bank_name, ifsc_code, branch, gst_in, aadhar_card,
+      // pan_card, religion, images, customer_id, user_id, password, duty_start_time, duty_end_time
       const sql = `INSERT INTO account_details (
           account_name, print_name, account_group, op_bal, metal_balance, dr_cr,
           address1, address2, city, pincode, state, state_code,
           phone, mobile, contact_person, email, birthday, anniversary,
-          bank_account_no, bank_name, ifsc_code, branch, gst_in, aadhar_card, pan_card, religion, images, 
-          customer_id, user_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+          bank_account_no, bank_name, ifsc_code, branch, gst_in, aadhar_card,
+          pan_card, religion, images, customer_id, user_id, password,
+          duty_start_time, duty_end_time
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
       const values = [
-          data.account_name, data.print_name, data.account_group, data.op_bal || null, 
-          data.metal_balance || null, data.dr_cr || null,
-          data.address1 || null, data.address2 || null, data.city || null, 
-          data.pincode || null, data.state || null, data.state_code || null,
-          data.phone || null, data.mobile || null, data.contact_person || null, 
-          data.email || null, data.birthday || null, data.anniversary || null,
-          data.bank_account_no || null, data.bank_name || null, data.ifsc_code || null, 
-          data.branch || null, data.gst_in || null, data.aadhar_card || null, 
-          data.pan_card || null, data.religion || null, imageData, 
-          customerId, userId
+          data.account_name, 
+          data.print_name, 
+          data.account_group, 
+          data.op_bal || null, 
+          data.metal_balance || null, 
+          data.dr_cr || null,
+          data.address1 || null, 
+          data.address2 || null, 
+          data.city || null, 
+          data.pincode || null, 
+          data.state || null, 
+          data.state_code || null,
+          data.phone || null, 
+          data.mobile || null, 
+          data.contact_person || null, 
+          data.email || null, 
+          data.birthday || null, 
+          data.anniversary || null,
+          data.bank_account_no || null, 
+          data.bank_name || null, 
+          data.ifsc_code || null, 
+          data.branch || null, 
+          data.gst_in || null, 
+          data.aadhar_card || null, 
+          data.pan_card || null, 
+          data.religion || null, 
+          imageData, 
+          customerId, 
+          userId, 
+          data.password || null,
+          data.duty_start_time || null,
+          data.duty_end_time || null
       ];
+
+      console.log('Executing SQL with values:', values);
+      console.log('Values count:', values.length);
+      console.log('Expected placeholders count:', sql.split('?').length - 1);
 
       db.query(sql, values, (err, result) => {
         if (err) {
+          console.error('Database error:', err);
           reject(err);
         } else {
           resolve({ insertId: result.insertId, customer_id: customerId, user_id: userId });
         }
       });
     } catch (error) {
+      console.error('Error in createAccount:', error);
       reject(error);
     }
   });
@@ -128,6 +163,18 @@ const getAllAccounts = (callback) => {
 const getAccountById = (id, callback) => {
     const sql = 'SELECT * FROM account_details WHERE account_id = ?';
     db.query(sql, [id], callback);
+};
+
+// Get salesman by email
+const getSalesmanByEmail = (email, callback) => {
+    const sql = 'SELECT * FROM account_details WHERE email = ? AND account_group = "SALESMAN"';
+    db.query(sql, [email], callback);
+};
+
+// Check duty hours for salesman by account_id
+const checkDutyHoursByAccountId = (accountId, callback) => {
+    const sql = 'SELECT account_id as id, account_group as role, duty_start_time, duty_end_time, account_name as full_name, email FROM account_details WHERE account_id = ? AND account_group = "SALESMAN"';
+    db.query(sql, [accountId], callback);
 };
 
 // Update account by ID
@@ -219,5 +266,7 @@ module.exports = {
     getAccountById,
     updateAccount,
     deleteAccount,
-    upload
+    upload,
+    getSalesmanByEmail,
+    checkDutyHoursByAccountId
 };

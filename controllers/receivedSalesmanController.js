@@ -46,14 +46,15 @@ exports.saveReceivedSalesman = (req, res) => {
           return res.status(500).json({ message: "Error saving received salesman data", error: err });
         }
         
-        // After successful transfer, update stock points in opening_tags_entry back to Available
+        // After successful transfer, update stock points in opening_tags_entry
         if (productCodes.length > 0 && to_stock_point_id) {
-          receivedSalesmanModel.updateStockPointForReceived(productCodes, to_stock_point_id, (updateErr, updateResult) => {
+          // FIX: Pass to_user_id as the 4th parameter
+          receivedSalesmanModel.updateStockPointForReceived(productCodes, to_stock_point_id, to_user_id, (updateErr, updateResult) => {
             if (updateErr) {
               console.error("Error updating stock points for received:", updateErr);
               // Don't fail the whole transaction, just log the error
             }
-            console.log(`Updated stock point for ${updateResult?.updatedCount || 0} products to Available`);
+            console.log(`Updated stock point for ${updateResult?.updatedCount || 0} products`);
             
             // After updating stock points, delete the assigned records
             if (assignedIds.length > 0) {

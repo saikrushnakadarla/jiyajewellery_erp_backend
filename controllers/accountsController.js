@@ -12,7 +12,7 @@ const createAccount = async (req, res) => {
             message: 'Account created successfully', 
             account_id: result.insertId,
             customer_id: result.customer_id,
-            user_id: data.user_id  // Return user_id in response
+            user_id: data.user_id
         });
     } catch (err) {
         console.error('Error inserting into account_details:', err.message);
@@ -80,10 +80,109 @@ const deleteAccount = (req, res) => {
     });
 };
 
+// Salesman Login Controller
+const salesmanLogin = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        
+        if (!email || !password) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Email and password are required' 
+            });
+        }
+
+        accountModel.getSalesmanByEmail(email, (err, results) => {
+            if (err) {
+                console.error('Salesman login error:', err);
+                return res.status(500).json({ 
+                    success: false, 
+                    message: 'Database error' 
+                });
+            }
+
+            if (results.length === 0) {
+                return res.status(401).json({ 
+                    success: false, 
+                    message: 'Invalid email or password' 
+                });
+            }
+
+            const salesman = results[0];
+
+            if (password !== salesman.password) {
+                return res.status(401).json({ 
+                    success: false, 
+                    message: 'Invalid email or password' 
+                });
+            }
+
+            const user = {
+                id: salesman.account_id,
+                full_name: salesman.account_name,
+                email_id: salesman.email,
+                phone: salesman.mobile || salesman.phone,
+                role: salesman.account_group.toLowerCase(),
+                status: 'approved',
+                account_status: salesman.account_status || 'active',
+                email_verified: 'Verified',
+                duty_start_time: salesman.duty_start_time,
+                duty_end_time: salesman.duty_end_time
+            };
+
+            res.json({
+                success: true,
+                message: 'Login successful',
+                user: user
+            });
+        });
+
+    } catch (error) {
+        console.error('Salesman login error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Internal server error' 
+        });
+    }
+};
+
+// NEW: Check duty hours for salesman by account ID
+const checkDutyHours = (req, res) => {
+    const { accountId } = req.params;
+    
+    if (!accountId) {
+        return res.status(400).json({ message: 'Account ID is required' });
+    }
+    
+    accountModel.checkDutyHoursByAccountId(accountId, (err, results) => {
+        if (err) {
+            console.error('Error checking duty hours:', err);
+            return res.status(500).json({ error: 'Database error' });
+        }
+        
+        if (results.length === 0) {
+            return res.status(404).json({ message: 'Salesman not found' });
+        }
+        
+        const salesman = results[0];
+        
+        res.json({
+            id: salesman.id,
+            role: salesman.role,
+            duty_start_time: salesman.duty_start_time,
+            duty_end_time: salesman.duty_end_time,
+            full_name: salesman.full_name,
+            email_id: salesman.email
+        });
+    });
+};
+
 module.exports = {
     createAccount,
     getAllAccounts,
     getAccountById,
     updateAccount,
-    deleteAccount
+    deleteAccount,
+    salesmanLogin,
+    checkDutyHours  // Export new function
 };

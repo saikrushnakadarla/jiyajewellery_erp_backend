@@ -11,4 +11,7 @@ router.get('/get/account-details/:id', accountController.getAccountById);
 router.put('/edit/account-details/:id', accountModel.upload.array('images', 10), accountController.updateAccount);
 router.delete('/delete/account-details/:id', accountController.deleteAccount);
 
+router.post('/salesman/login', accountController.salesmanLogin);
+router.get('/salesman/check-duty-hours/:accountId', accountController.checkDutyHours);
+
 module.exports = router;

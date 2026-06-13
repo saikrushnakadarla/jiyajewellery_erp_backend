@@ -300,7 +300,9 @@ exports.getSalesmen = (callback) => {
 };
 
 // Update stock point back to Available and reset user_id
-exports.updateStockPointForReceived = (productCodes, stockPointId, callback) => {
+// Update stock point back to Available and set user_id to the receiver (logged-in user)
+// Update stock point back to Available and set user_id to the receiver (logged-in user)
+exports.updateStockPointForReceived = (productCodes, stockPointId, to_user_id, callback) => {
   if (!productCodes || productCodes.length === 0) {
     return callback(null, { message: "No products to update" });
   }
@@ -321,26 +323,38 @@ exports.updateStockPointForReceived = (productCodes, stockPointId, callback) => 
     }
 
     const stockPointName = stockPointResult[0].stock_point_name;
+    
+    // Ensure to_user_id is a number or null - convert if needed
+    const userId = to_user_id !== undefined && to_user_id !== null ? parseInt(to_user_id) : null;
+    
+    // Log the values for debugging
+    console.log("Updating stock point with values:", {
+      stockPointName,
+      userId,
+      productCodes
+    });
 
     const placeholders = productCodes.map(() => '?').join(',');
+    
     const updateSql = `
       UPDATE opening_tags_entry 
-      SET Stock_Point = ?, user_id = NULL, Status = 'Available' 
+      SET Stock_Point = ?, user_id = ?, Status = 'Available' 
       WHERE PCode_BarCode IN (${placeholders})
     `;
 
-    const params = [stockPointName, ...productCodes];
+    const params = [stockPointName, userId, ...productCodes];
 
     db.query(updateSql, params, (updateErr, result) => {
       if (updateErr) {
         console.error("Error updating stock point for received:", updateErr);
         return callback(updateErr);
       }
-      console.log(`Updated stock point to '${stockPointName}', Status to 'Available', and user_id to NULL for ${result.affectedRows} products`);
+      console.log(`Updated stock point to '${stockPointName}', user_id to ${userId}, Status to 'Available' for ${result.affectedRows} products`);
       callback(null, { updatedCount: result.affectedRows });
     });
   });
 };
+
 
 // Delete records from assigned_salesman_transfers and assigned_salesman_items
 exports.deleteAssignedRecords = (assignedIds, callback) => {

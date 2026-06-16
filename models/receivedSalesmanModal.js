@@ -356,6 +356,87 @@ exports.updateStockPointForReceived = (productCodes, stockPointId, to_user_id, c
 };
 
 
+
+// Add this function to receivedSalesmanModel.js
+
+// Update stock point with status based on type (Selected for packet, Available for normal)
+// Replace the updateStockPointWithStatus function with this version that handles per-product status
+exports.updateStockPointWithStatus = (transferData, stockPointId, to_user_id, callback) => {
+  if (!transferData || transferData.length === 0) {
+    return callback(null, { message: "No products to update" });
+  }
+
+  const getStockPointSql = `
+    SELECT stock_point_name FROM stock_points 
+    WHERE stock_point_id = ?
+  `;
+
+  db.query(getStockPointSql, [stockPointId], (err, stockPointResult) => {
+    if (err) {
+      console.error("Error fetching stock point:", err);
+      return callback(err);
+    }
+
+    if (stockPointResult.length === 0) {
+      return callback(new Error("Stock point not found"));
+    }
+
+    const stockPointName = stockPointResult[0].stock_point_name;
+    const userId = to_user_id !== undefined && to_user_id !== null ? parseInt(to_user_id) : null;
+
+    // Process each product individually with its own status
+    let updatedCount = 0;
+    let errorOccurred = false;
+
+    // Use a loop to update each product with its specific status
+    const updatePromises = transferData.map((item) => {
+      return new Promise((resolve, reject) => {
+        const productCode = item.PCode_BarCode;
+        if (!productCode) {
+          return resolve();
+        }
+
+        // Determine status based on is_packet_selection flag
+        const status = item.is_packet_selection === true ? 'Selected' : 'Available';
+
+        const updateSql = `
+          UPDATE opening_tags_entry 
+          SET Stock_Point = ?, user_id = ?, Status = ? 
+          WHERE PCode_BarCode = ?
+        `;
+
+        const params = [stockPointName, userId, status, productCode];
+
+        db.query(updateSql, params, (updateErr, result) => {
+          if (updateErr) {
+            console.error(`Error updating product ${productCode}:`, updateErr);
+            errorOccurred = true;
+            return reject(updateErr);
+          }
+          if (result.affectedRows > 0) {
+            updatedCount++;
+          }
+          console.log(`Updated ${productCode}: Stock_Point='${stockPointName}', user_id=${userId}, Status='${status}'`);
+          resolve();
+        });
+      });
+    });
+
+    // Execute all updates in parallel
+    Promise.all(updatePromises)
+      .then(() => {
+        if (errorOccurred) {
+          console.log("Some updates had errors, but continuing...");
+        }
+        callback(null, { updatedCount: updatedCount });
+      })
+      .catch((updateErr) => {
+        console.error("Error updating stock points:", updateErr);
+        callback(updateErr);
+      });
+  });
+};
+
 // Delete records from assigned_salesman_transfers and assigned_salesman_items
 exports.deleteAssignedRecords = (assignedIds, callback) => {
   if (!assignedIds || assignedIds.length === 0) {

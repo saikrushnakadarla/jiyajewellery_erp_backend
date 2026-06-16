@@ -1,5 +1,8 @@
 const receivedSalesmanModel = require("../models/receivedSalesmanModal");
 
+// Replace the saveReceivedSalesman function in receivedSalesmanController.js
+
+// Replace the saveReceivedSalesman function
 exports.saveReceivedSalesman = (req, res) => {
   try {
     const { 
@@ -26,10 +29,11 @@ exports.saveReceivedSalesman = (req, res) => {
       return res.status(400).json({ message: "To stock point is required" });
     }
 
-    // Extract product codes from transfer_data for stock point update
+    // Extract product codes and assigned IDs
     const productCodes = transfer_data.map(item => item.PCode_BarCode).filter(code => code);
     const assignedIds = transfer_data.map(item => item.assigned_id).filter(id => id);
 
+    // Insert transfer records
     receivedSalesmanModel.insert(
       transfer_data,
       from_salesman_id,
@@ -47,40 +51,45 @@ exports.saveReceivedSalesman = (req, res) => {
         }
         
         // After successful transfer, update stock points in opening_tags_entry
-        if (productCodes.length > 0 && to_stock_point_id) {
-          // FIX: Pass to_user_id as the 4th parameter
-          receivedSalesmanModel.updateStockPointForReceived(productCodes, to_stock_point_id, to_user_id, (updateErr, updateResult) => {
-            if (updateErr) {
-              console.error("Error updating stock points for received:", updateErr);
-              // Don't fail the whole transaction, just log the error
-            }
-            console.log(`Updated stock point for ${updateResult?.updatedCount || 0} products`);
-            
-            // After updating stock points, delete the assigned records
-            if (assignedIds.length > 0) {
-              receivedSalesmanModel.deleteAssignedRecords(assignedIds, (deleteErr, deleteResult) => {
-                if (deleteErr) {
-                  console.error("Error deleting assigned records:", deleteErr);
-                }
-                console.log(`Deleted ${deleteResult?.deletedCount || 0} assigned records`);
-                
+        if (transfer_data.length > 0 && to_stock_point_id) {
+          // Pass the entire transfer_data to process each product individually
+          receivedSalesmanModel.updateStockPointWithStatus(
+            transfer_data,  // Pass the full transfer data with is_packet_selection flags
+            to_stock_point_id, 
+            to_user_id,
+            (updateErr, updateResult) => {
+              if (updateErr) {
+                console.error("Error updating stock points:", updateErr);
+                // Don't fail the whole transaction, just log the error
+              }
+              console.log(`Updated ${updateResult?.updatedCount || 0} products with individual statuses`);
+              
+              // After updating stock points, delete the assigned records
+              if (assignedIds.length > 0) {
+                receivedSalesmanModel.deleteAssignedRecords(assignedIds, (deleteErr, deleteResult) => {
+                  if (deleteErr) {
+                    console.error("Error deleting assigned records:", deleteErr);
+                  }
+                  console.log(`Deleted ${deleteResult?.deletedCount || 0} assigned records`);
+                  
+                  res.json({ 
+                    message: "Received from salesman completed successfully", 
+                    transfer_id: result.transfer_id,
+                    transfer_number: result.transfer_number,
+                    items_updated: updateResult?.updatedCount || 0,
+                    records_deleted: deleteResult?.deletedCount || 0
+                  });
+                });
+              } else {
                 res.json({ 
                   message: "Received from salesman completed successfully", 
                   transfer_id: result.transfer_id,
                   transfer_number: result.transfer_number,
-                  items_updated: updateResult?.updatedCount || 0,
-                  records_deleted: deleteResult?.deletedCount || 0
+                  items_updated: updateResult?.updatedCount || 0
                 });
-              });
-            } else {
-              res.json({ 
-                message: "Received from salesman completed successfully", 
-                transfer_id: result.transfer_id,
-                transfer_number: result.transfer_number,
-                items_updated: updateResult?.updatedCount || 0
-              });
+              }
             }
-          });
+          );
         } else {
           res.json({ 
             message: "Received from salesman completed successfully", 

@@ -303,7 +303,7 @@ exports.updateStockPointForSalesman = (productCodes, salesmanId, callback) => {
   }
 
   const getSalesmanSql = `
-    SELECT account_name, user_id FROM account_details 
+    SELECT account_name, account_id FROM account_details 
     WHERE account_id = ?
   `;
 
@@ -318,7 +318,7 @@ exports.updateStockPointForSalesman = (productCodes, salesmanId, callback) => {
     }
 
     const salesmanName = salesmanResult[0].account_name;
-    const userId = salesmanResult[0].user_id;
+    const userId = salesmanResult[0].account_id;
 
     const placeholders = productCodes.map(() => '?').join(',');
     const updateSql = `

@@ -386,6 +386,8 @@ const getNextPCodeBarCode = (req, res) => {
 };
 
 
+// openingTagsController.js - Simplified version
+
 const updateOpeningTagsStatus = (req, res) => {
     const { barcodes, status, stock_point } = req.body;
     
@@ -399,7 +401,9 @@ const updateOpeningTagsStatus = (req, res) => {
     
     // Create placeholders for SQL query
     const placeholders = barcodes.map(() => '?').join(',');
-    const sql = `UPDATE opening_tags_entry SET Status = ?, Stock_Point = ? WHERE PCode_BarCode IN (${placeholders})`;
+    
+    // Update Status, Stock_Point, and set user_id to NULL
+    const sql = `UPDATE opening_tags_entry SET Status = ?, Stock_Point = ?, user_id = NULL WHERE PCode_BarCode IN (${placeholders})`;
     
     const values = [status, stock_point || "MAIN STOCK ROOM", ...barcodes];
     
@@ -415,6 +419,7 @@ const updateOpeningTagsStatus = (req, res) => {
         });
     });
 };
+
 
 // Make sure to export it
 module.exports = {

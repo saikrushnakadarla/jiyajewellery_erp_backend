@@ -1,5 +1,9 @@
 const db = require("../../db");
 
+/**
+ * Insert a new stock transfer with its items.
+ * The 'image' field in each item should already be a file path (not base64).
+ */
 exports.insert = (
   transfer_data,
   from_warehouse_id,
@@ -14,7 +18,7 @@ exports.insert = (
   to_user_id = null,
   callback
 ) => {
-  // Handle callback as 11th parameter (if 11 args, last is callback)
+  // Handle optional parameters (if called with fewer args)
   if (typeof from_user_id === 'function') {
     callback = from_user_id;
     from_user_id = null;
@@ -29,17 +33,7 @@ exports.insert = (
     return callback(new Error("Invalid transfer_data array"));
   }
 
-  // Generate transfer number if not provided
-  const generateTransferNumber = () => {
-    const date = new Date();
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    return `STF${year}${month}${day}${random}`;
-  };
-
-  const transfer_number = reference_number || generateTransferNumber();
+  const transfer_number = reference_number;
   const transfer_date_formatted = transfer_date || new Date().toISOString().split('T')[0];
 
   // Calculate totals
@@ -54,7 +48,7 @@ exports.insert = (
     totalNetWeight += parseFloat(item.net_weight) || 0;
   });
 
-  // Insert main transfer record with from_user_id and to_user_id
+  // Insert main transfer record
   const insertTransferSql = `
     INSERT INTO stock_transfers (
       transfer_number,
@@ -97,18 +91,18 @@ exports.insert = (
 
   db.query(insertTransferSql, transferParams, (err, transferResult) => {
     if (err) {
-      console.error("Error inserting transfer:", err);
+      console.error("❌ Error inserting transfer:", err);
       return callback(err);
     }
 
     const transferId = transferResult.insertId;
 
-    // Insert transfer items
+    // Insert transfer items – image is now a file path (not base64)
     const insertItemsSql = `
       INSERT INTO stock_transfer_items (
         transfer_id,
         product_id,
-        PCode_BarCode,   
+        PCode_BarCode,
         product_name,
         metal_type,
         purity,
@@ -124,6 +118,7 @@ exports.insert = (
         stone_price,
         total_price,
         remarks,
+        image,
         created_at
       ) VALUES ?
     `;
@@ -147,20 +142,25 @@ exports.insert = (
       parseFloat(item.stone_price) || 0,
       parseFloat(item.total_price) || 0,
       item.remarks || null,
+      item.image || null,      // ✅ file path, not base64
       new Date()
     ]);
 
     db.query(insertItemsSql, [itemValues], (itemsErr) => {
       if (itemsErr) {
-        console.error("Error inserting transfer items:", itemsErr);
+        console.error("❌ Error inserting transfer items:", itemsErr);
         return callback(itemsErr);
       }
-      
+
+      console.log(`✅ Transfer ${transfer_number} saved with ${itemValues.length} items.`);
       callback(null, { transfer_id: transferId, transfer_number: transfer_number });
     });
   });
 };
 
+/**
+ * Get all stock transfers with warehouse and stock point names.
+ */
 exports.getAll = (callback) => {
   const sql = `
     SELECT 
@@ -181,6 +181,9 @@ exports.getAll = (callback) => {
   db.query(sql, callback);
 };
 
+/**
+ * Get a single stock transfer by ID, including its items.
+ */
 exports.getById = (transfer_id, callback) => {
   const mainSql = `
     SELECT 
@@ -201,10 +204,10 @@ exports.getById = (transfer_id, callback) => {
 
   db.query(mainSql, [transfer_id], (err, mainResults) => {
     if (err) {
-      console.error("Error fetching transfer details:", err);
+      console.error("❌ Error fetching transfer details:", err);
       return callback(err);
     }
-    
+
     if (mainResults.length === 0) {
       return callback(null, null);
     }
@@ -217,20 +220,23 @@ exports.getById = (transfer_id, callback) => {
 
     db.query(itemsSql, [transfer_id], (itemsErr, itemsResults) => {
       if (itemsErr) {
-        console.error("Error fetching transfer items:", itemsErr);
+        console.error("❌ Error fetching transfer items:", itemsErr);
         return callback(itemsErr);
       }
-      
+
       const result = {
         transfer_details: mainResults[0],
         transfer_items: itemsResults
       };
-      
+
       callback(null, result);
     });
   });
 };
 
+/**
+ * Update status and remarks of a transfer.
+ */
 exports.update = (transfer_id, status, remarks, callback) => {
   const sql = `
     UPDATE stock_transfers 
@@ -240,68 +246,72 @@ exports.update = (transfer_id, status, remarks, callback) => {
   db.query(sql, [status, remarks, transfer_id], callback);
 };
 
+/**
+ * Delete a transfer and its items.
+ */
 exports.delete = (transfer_id, callback) => {
-  // First delete items, then delete main record
+  // Delete items first
   const deleteItemsSql = `DELETE FROM stock_transfer_items WHERE transfer_id = ?`;
   db.query(deleteItemsSql, [transfer_id], (err) => {
     if (err) return callback(err);
-    
+
+    // Delete main record
     const deleteTransferSql = `DELETE FROM stock_transfers WHERE transfer_id = ?`;
     db.query(deleteTransferSql, [transfer_id], callback);
   });
 };
 
-exports.updateStatus = (transfer_id, status, callback) => {
-  const sql = `
-    UPDATE stock_transfers 
-    SET status = ?, updated_at = NOW()
-    WHERE transfer_id = ?
+/**
+ * Update stock point and user_id for transferred products in opening_tags_entry.
+ */
+exports.updateStockPointForTransfer = (productCodes, toStockPointId, callback) => {
+  if (!productCodes || productCodes.length === 0) {
+    return callback(null, { message: "No products to update" });
+  }
+
+  // Get stock point name and user_id
+  const getStockPointSql = `
+    SELECT stock_point_name, user_id FROM stock_points 
+    WHERE stock_point_id = ?
   `;
-  db.query(sql, [status, transfer_id], callback);
+
+  db.query(getStockPointSql, [toStockPointId], (err, stockPointResult) => {
+    if (err) {
+      console.error("❌ Error fetching stock point:", err);
+      return callback(err);
+    }
+
+    if (stockPointResult.length === 0) {
+      return callback(new Error("Stock point not found"));
+    }
+
+    const stockPointName = stockPointResult[0].stock_point_name;
+    const userId = stockPointResult[0].user_id;
+
+    // Update opening_tags_entry
+    const placeholders = productCodes.map(() => '?').join(',');
+    const updateSql = `
+      UPDATE opening_tags_entry 
+      SET Stock_Point = ?, user_id = ? 
+      WHERE PCode_BarCode IN (${placeholders})
+    `;
+
+    const params = [stockPointName, userId, ...productCodes];
+
+    db.query(updateSql, params, (updateErr, result) => {
+      if (updateErr) {
+        console.error("❌ Error updating stock point and user_id:", updateErr);
+        return callback(updateErr);
+      }
+      console.log(`✅ Updated stock point to '${stockPointName}' and user_id to ${userId} for ${result.affectedRows} products`);
+      callback(null, { updatedCount: result.affectedRows });
+    });
+  });
 };
 
-exports.getByDateRange = (start_date, end_date, callback) => {
-  const sql = `
-    SELECT 
-      st.*,
-      w1.warehouse_name as from_warehouse_name,
-      w2.warehouse_name as to_warehouse_name,
-      sp1.stock_point_name as from_stock_point_name,
-      sp2.stock_point_name as to_stock_point_name,
-      sp1.user_id as from_user_id_value,
-      sp2.user_id as to_user_id_value
-    FROM stock_transfers st
-    LEFT JOIN warehouses w1 ON st.from_warehouse_id = w1.warehouse_id
-    LEFT JOIN warehouses w2 ON st.to_warehouse_id = w2.warehouse_id
-    LEFT JOIN stock_points sp1 ON st.from_stock_point_id = sp1.stock_point_id
-    LEFT JOIN stock_points sp2 ON st.to_stock_point_id = sp2.stock_point_id
-    WHERE st.transfer_date BETWEEN ? AND ?
-    ORDER BY st.transfer_date DESC
-  `;
-  db.query(sql, [start_date, end_date], callback);
-};
-
-exports.getByStatus = (status, callback) => {
-  const sql = `
-    SELECT 
-      st.*,
-      w1.warehouse_name as from_warehouse_name,
-      w2.warehouse_name as to_warehouse_name,
-      sp1.stock_point_name as from_stock_point_name,
-      sp2.stock_point_name as to_stock_point_name,
-      sp1.user_id as from_user_id_value,
-      sp2.user_id as to_user_id_value
-    FROM stock_transfers st
-    LEFT JOIN warehouses w1 ON st.from_warehouse_id = w1.warehouse_id
-    LEFT JOIN warehouses w2 ON st.to_warehouse_id = w2.warehouse_id
-    LEFT JOIN stock_points sp1 ON st.from_stock_point_id = sp1.stock_point_id
-    LEFT JOIN stock_points sp2 ON st.to_stock_point_id = sp2.stock_point_id
-    WHERE st.status = ?
-    ORDER BY st.created_at DESC
-  `;
-  db.query(sql, [status], callback);
-};
-
+/**
+ * Get the last transfer number to increment for the next one.
+ */
 exports.getLastTransferNumber = (callback) => {
   const sql = `
     SELECT transfer_number FROM stock_transfers 
@@ -310,16 +320,15 @@ exports.getLastTransferNumber = (callback) => {
   `;
   db.query(sql, (err, results) => {
     if (err) {
-      console.error("Error fetching last transfer number:", err);
+      console.error("❌ Error fetching last transfer number:", err);
       return callback(err);
     }
-    
+
     if (results.length === 0) {
       return callback(null, "STF001");
     }
-    
+
     const lastNumber = results[0].transfer_number;
-    // Extract numeric part and increment
     const match = lastNumber.match(/STF(\d+)/);
     if (match) {
       const num = parseInt(match[1]) + 1;
@@ -331,13 +340,11 @@ exports.getLastTransferNumber = (callback) => {
   });
 };
 
-// Updated function to update stock point AND user_id for transferred products
 exports.updateStockPointForTransfer = (productCodes, toStockPointId, callback) => {
   if (!productCodes || productCodes.length === 0) {
     return callback(null, { message: "No products to update" });
   }
 
-  // First get the stock point name and user_id from stock_points table
   const getStockPointSql = `
     SELECT stock_point_name, user_id FROM stock_points 
     WHERE stock_point_id = ?
@@ -356,7 +363,6 @@ exports.updateStockPointForTransfer = (productCodes, toStockPointId, callback) =
     const stockPointName = stockPointResult[0].stock_point_name;
     const userId = stockPointResult[0].user_id;
 
-    // Update opening_tags_entry table with new stock point and user_id
     const placeholders = productCodes.map(() => '?').join(',');
     const updateSql = `
       UPDATE opening_tags_entry 

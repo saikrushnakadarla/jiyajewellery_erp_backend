@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
+const multer = require('multer');
 // Import route files
 
 const purityRoutes = require('./routes/purityRoutes');
@@ -65,6 +66,14 @@ app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
 // Define routes
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use("/invoices", express.static(path.join(__dirname, "uploads/invoices")));
+
+
+// Add this line with the other static file serves
+app.use('/uploads/stock-transfers', express.static(path.join(__dirname, 'uploads/stock-transfers')));
+
+app.use('/uploads/assigned-salesman', express.static(path.join(__dirname, 'uploads/assigned-salesman')));
+
+app.use('/uploads/received-salesman', express.static(path.join(__dirname, 'uploads/received-salesman')));
 
 app.use('/', memberSchemeRoutes);
 app.use('/', ledgerroutes);

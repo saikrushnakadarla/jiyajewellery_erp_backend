@@ -104,33 +104,47 @@ exports.insert = (
         making_charges,
         stone_price,
         total_price,
+        image,
         remarks,
         created_at
       ) VALUES ?
     `;
 
-    const itemValues = transfer_data.map(item => [
-      receivedId,
-      item.item_id || null,
-      item.product_id || null,
-      item.PCode_BarCode || null,
-      item.product_name || null,
-      item.metal_type || null,
-      item.purity || null,
-      item.category || null,
-      item.sub_category || null,
-      item.design_name || null,
-      parseFloat(item.qty) || 0,
-      parseFloat(item.gross_weight) || 0,
-      parseFloat(item.stone_weight) || 0,
-      parseFloat(item.net_weight) || 0,
-      parseFloat(item.rate) || 0,
-      parseFloat(item.making_charges) || 0,
-      parseFloat(item.stone_price) || 0,
-      parseFloat(item.total_price) || 0,
-      item.remarks || null,
-      new Date()
-    ]);
+    const itemValues = transfer_data.map(item => {
+      // Process image path similar to assigned_salesman
+      let imagePath = item.image || null;
+      if (imagePath && imagePath.startsWith('http')) {
+        const urlObj = new URL(imagePath);
+        imagePath = urlObj.pathname;
+      }
+      if (imagePath && !imagePath.startsWith('/') && !imagePath.startsWith('http')) {
+        imagePath = '/' + imagePath;
+      }
+
+      return [
+        receivedId,
+        item.item_id || null,
+        item.product_id || null,
+        item.PCode_BarCode || null,
+        item.product_name || null,
+        item.metal_type || null,
+        item.purity || null,
+        item.category || null,
+        item.sub_category || null,
+        item.design_name || null,
+        parseFloat(item.qty) || 0,
+        parseFloat(item.gross_weight) || 0,
+        parseFloat(item.stone_weight) || 0,
+        parseFloat(item.net_weight) || 0,
+        parseFloat(item.rate) || 0,
+        parseFloat(item.making_charges) || 0,
+        parseFloat(item.stone_price) || 0,
+        parseFloat(item.total_price) || 0,
+        imagePath, // Add image path
+        item.remarks || null,
+        new Date()
+      ];
+    });
 
     db.query(insertItemsSql, [itemValues], (itemsErr) => {
       if (itemsErr) {
@@ -299,8 +313,6 @@ exports.getSalesmen = (callback) => {
   db.query(sql, callback);
 };
 
-// Update stock point back to Available and reset user_id
-// Update stock point back to Available and set user_id to the receiver (logged-in user)
 // Update stock point back to Available and set user_id to the receiver (logged-in user)
 exports.updateStockPointForReceived = (productCodes, stockPointId, to_user_id, callback) => {
   if (!productCodes || productCodes.length === 0) {
@@ -326,7 +338,7 @@ exports.updateStockPointForReceived = (productCodes, stockPointId, to_user_id, c
     
     // Ensure to_user_id is a number or null - convert if needed
     const userId = to_user_id !== undefined && to_user_id !== null ? parseInt(to_user_id) : null;
-    
+
     // Log the values for debugging
     console.log("Updating stock point with values:", {
       stockPointName,
@@ -472,6 +484,7 @@ exports.deleteAssignedRecords = (assignedIds, callback) => {
 };
 
 // Get products assigned to a salesman (from assigned_salesman tables)
+// Get products assigned to a salesman (from assigned_salesman tables)
 exports.getProductsBySalesman = (salesman_id, callback) => {
   const sql = `
     SELECT 
@@ -493,6 +506,7 @@ exports.getProductsBySalesman = (salesman_id, callback) => {
       asi.making_charges,
       asi.stone_price,
       asi.total_price,
+      asi.image,
       ast.transfer_date,
       ast.status as transfer_status
     FROM assigned_salesman_items asi
@@ -510,7 +524,6 @@ exports.getProductsBySalesman = (salesman_id, callback) => {
     callback(null, results);
   });
 };
-
 
 exports.getLastReceivedNumber = (callback) => {
   const sql = `

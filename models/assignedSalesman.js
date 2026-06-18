@@ -103,32 +103,50 @@ exports.insert = (
         making_charges,
         stone_price,
         total_price,
+        image,
         remarks,
         created_at
       ) VALUES ?
     `;
 
-    const itemValues = transfer_data.map(item => [
-      assignedId,
-      item.product_id || null,
-      item.PCode_BarCode || null,
-      item.product_name || null,
-      item.metal_type || null,
-      item.purity || null,
-      item.category || null,
-      item.sub_category || null,
-      item.design_name || null,
-      parseFloat(item.qty) || 0,
-      parseFloat(item.gross_weight) || 0,
-      parseFloat(item.stone_weight) || 0,
-      parseFloat(item.net_weight) || 0,
-      parseFloat(item.rate) || 0,
-      parseFloat(item.making_charges) || 0,
-      parseFloat(item.stone_price) || 0,
-      parseFloat(item.total_price) || 0,
-      item.remarks || null,
-      new Date()
-    ]);
+    const itemValues = transfer_data.map(item => {
+      // Ensure image path is properly stored
+      let imagePath = item.image || null;
+      // If image is a full URL, extract just the path or keep as is
+      if (imagePath && imagePath.startsWith('http')) {
+        // Keep the full URL or extract path as needed
+        // For storage, we want the relative path
+        const urlObj = new URL(imagePath);
+        imagePath = urlObj.pathname;
+      }
+      // If image path doesn't start with /, add it
+      if (imagePath && !imagePath.startsWith('/') && !imagePath.startsWith('http')) {
+        imagePath = '/' + imagePath;
+      }
+      
+      return [
+        assignedId,
+        item.product_id || null,
+        item.PCode_BarCode || null,
+        item.product_name || null,
+        item.metal_type || null,
+        item.purity || null,
+        item.category || null,
+        item.sub_category || null,
+        item.design_name || null,
+        parseFloat(item.qty) || 0,
+        parseFloat(item.gross_weight) || 0,
+        parseFloat(item.stone_weight) || 0,
+        parseFloat(item.net_weight) || 0,
+        parseFloat(item.rate) || 0,
+        parseFloat(item.making_charges) || 0,
+        parseFloat(item.stone_price) || 0,
+        parseFloat(item.total_price) || 0,
+        imagePath, // Store the image path
+        item.remarks || null,
+        new Date()
+      ];
+    });
 
     db.query(insertItemsSql, [itemValues], (itemsErr) => {
       if (itemsErr) {
@@ -400,8 +418,6 @@ exports.getByStatus = (status, callback) => {
   db.query(sql, [status], callback);
 };
 
-
-// Add this new model method
 exports.getProductsBySalesman = (salesman_id, callback) => {
   const sql = `
     SELECT 
@@ -423,6 +439,7 @@ exports.getProductsBySalesman = (salesman_id, callback) => {
       asi.making_charges,
       asi.stone_price,
       asi.total_price,
+      asi.image,
       ast.transfer_date,
       ast.status as transfer_status
     FROM assigned_salesman_items asi

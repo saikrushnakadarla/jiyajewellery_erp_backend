@@ -31,7 +31,7 @@ router.get('/', async (req, res) => {
         sp.stock_point_name as warehouse_name,
         sp.location as warehouse_location
       FROM visit_logs_warehouse_schedule vlws
-      LEFT JOIN account_details c ON vlws.customer_id = c.account_id
+      LEFT JOIN account_details c ON vlws.customer_account_id = c.account_id
       LEFT JOIN stock_points sp ON vlws.warehouse_id = sp.stock_point_id
       ORDER BY vlws.scheduled_date DESC
     `);
@@ -65,7 +65,7 @@ router.get('/:id', async (req, res) => {
         sp.location as warehouse_location,
         sp.warehouse_id
       FROM visit_logs_warehouse_schedule vlws
-      LEFT JOIN account_details c ON vlws.customer_id = c.account_id
+      LEFT JOIN account_details c ON vlws.customer_account_id = c.account_id
       LEFT JOIN stock_points sp ON vlws.warehouse_id = sp.stock_point_id
       WHERE vlws.id = ?
     `, [id]);
@@ -126,7 +126,7 @@ router.post('/', async (req, res) => {
     // Step 1: Validate customer exists in account_details
     console.log(`🔍 Checking customer with account_id: ${customerIdInt}`);
     const customer = await queryAsync(
-      'SELECT account_id, account_name, account_group FROM account_details WHERE account_id = ?', 
+      'SELECT account_id, customer_id, account_name, account_group FROM account_details WHERE account_id = ?', 
       [customerIdInt]
     );
     
@@ -152,7 +152,9 @@ router.post('/', async (req, res) => {
       });
     }
     
-    console.log(`✅ Customer validated: ${customer[0].account_name} (${customer[0].account_id})`);
+    // Get the actual customer_id (like "CUST-001") or use account_id as fallback
+    const actualCustomerId = customer[0].customer_id || customer[0].account_id;
+    console.log(`✅ Customer validated: ${customer[0].account_name} (Account ID: ${customer[0].account_id}, Customer ID: ${actualCustomerId})`);
     
     // Step 2: Validate warehouse/stock point exists
     console.log(`🔍 Checking warehouse with ID: ${warehouseIdInt}`);
@@ -235,7 +237,7 @@ router.post('/', async (req, res) => {
     for (const barcode of validBarcodes) {
       const existing = await queryAsync(
         `SELECT id, barcode FROM visit_logs_warehouse_schedule 
-         WHERE customer_id = ? AND warehouse_id = ? AND barcode = ? 
+         WHERE customer_account_id = ? AND warehouse_id = ? AND barcode = ? 
          AND status = 'scheduled'`,
         [customerIdInt, warehouseIdInt, barcode]
       );
@@ -259,38 +261,16 @@ router.post('/', async (req, res) => {
     const insertedIds = [];
     for (const barcode of validBarcodes) {
       console.log(`📝 Inserting schedule for barcode: ${barcode}...`);
+      
+      // Store both the account_id (as customer_account_id) and the actual customer_id (as customer_id)
       const result = await queryAsync(
         `INSERT INTO visit_logs_warehouse_schedule 
-         (customer_id, warehouse_id, barcode, scheduled_date) 
-         VALUES (?, ?, ?, ?)`,
-        [customerIdInt, warehouseIdInt, barcode, scheduled_date]
+         (customer_account_id, customer_id, warehouse_id, barcode, scheduled_date) 
+         VALUES (?, ?, ?, ?, ?)`,
+        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date]
       );
       insertedIds.push(result.insertId);
-      console.log(`✅ Schedule inserted with ID: ${result.insertId}`);
-    }
-    
-    // Step 6: Create notification for the customer
-    const barcodeDetailsList = barcodeDetails.map(d => d.product_name).join(', ');
-    await createWarehouseScheduleNotification(
-      customerIdInt, 
-      warehouseIdInt, 
-      validBarcodes, 
-      scheduled_date,
-      warehouse[0].stock_point_name,
-      barcodeDetailsList
-    );
-    
-    // Send admin notification via SSE if available
-    if (global.sendAdminNotification) {
-      global.sendAdminNotification({
-        type: 'NEW_WAREHOUSE_SCHEDULE',
-        message: `New warehouse visit scheduled for customer #${customerIdInt} with ${validBarcodes.length} barcodes`,
-        customer_id: customerIdInt,
-        warehouse_id: warehouseIdInt,
-        barcodes: validBarcodes,
-        scheduled_date: scheduled_date,
-        timestamp: new Date().toISOString()
-      });
+      console.log(`✅ Schedule inserted with ID: ${result.insertId} (customer_id: ${actualCustomerId})`);
     }
     
     res.status(201).json({ 
@@ -307,41 +287,6 @@ router.post('/', async (req, res) => {
     });
   }
 });
-
-// Helper function to create notification for warehouse visit schedule
-async function createWarehouseScheduleNotification(customerId, warehouseId, barcodes, scheduledDate, warehouseName, productNames) {
-  try {
-    console.log(`📧 Creating notification for customer ${customerId}...`);
-    
-    const scheduledDateTime = new Date(scheduledDate);
-    const formattedDate = scheduledDateTime.toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
-    const formattedTime = scheduledDateTime.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
-    
-    const barcodeCount = barcodes.length;
-    const title = `🏭 New Warehouse Visit Scheduled (${barcodeCount} items)`;
-    const message = `You have a scheduled warehouse visit at ${warehouseName} on ${formattedDate} at ${formattedTime}. Items: ${productNames}. Barcodes: ${barcodes.join(', ')}. Please be available at the scheduled time.`;
-    
-    // Insert notification
-    await queryAsync(
-      `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
-       VALUES (?, 'customer', ?, ?, 'warehouse_schedule', ?, NOW())`,
-      [customerId, title, message, customerId]
-    );
-    
-    console.log(`✅ Notification sent to customer ${customerId}`);
-  } catch (error) {
-    console.error('❌ Error creating warehouse schedule notification:', error);
-  }
-}
 
 // PUT - Update warehouse visit schedule
 router.put('/:id', async (req, res) => {
@@ -388,7 +333,7 @@ router.put('/:id', async (req, res) => {
     
     // Validate customer exists in account_details
     const customer = await queryAsync(
-      'SELECT account_id, account_name, account_group FROM account_details WHERE account_id = ?', 
+      'SELECT account_id, customer_id, account_name, account_group FROM account_details WHERE account_id = ?', 
       [customerIdInt]
     );
     
@@ -410,6 +355,9 @@ router.put('/:id', async (req, res) => {
       });
     }
     
+    // Get the actual customer_id (like "CUST-001") or use account_id as fallback
+    const actualCustomerId = customer[0].customer_id || customer[0].account_id;
+    
     // Validate warehouse exists
     const warehouse = await queryAsync(
       'SELECT stock_point_id, stock_point_name FROM stock_points WHERE stock_point_id = ?', 
@@ -424,7 +372,7 @@ router.put('/:id', async (req, res) => {
     }
     
     // Get old data for notification
-    const oldCustomerId = existing[0].customer_id;
+    const oldCustomerId = existing[0].customer_account_id;
     const oldWarehouseId = existing[0].warehouse_id;
     const oldBarcode = existing[0].barcode;
     
@@ -443,65 +391,14 @@ router.put('/:id', async (req, res) => {
     for (const barcode of barcodes) {
       const result = await queryAsync(
         `INSERT INTO visit_logs_warehouse_schedule 
-         (customer_id, warehouse_id, barcode, scheduled_date, status) 
-         VALUES (?, ?, ?, ?, ?)`,
-        [customerIdInt, warehouseIdInt, barcode, scheduled_date, status || 'scheduled']
+         (customer_account_id, customer_id, warehouse_id, barcode, scheduled_date, status) 
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date, status || 'scheduled']
       );
       insertedIds.push(result.insertId);
     }
     
     console.log(`✅ Schedule ${id} updated successfully with ${insertedIds.length} new entries`);
-    
-    // Send notifications based on changes
-    if (oldCustomerId !== customerIdInt) {
-      // Notify old customer about change
-      await queryAsync(
-        `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
-         VALUES (?, 'customer', ?, ?, 'warehouse_schedule', ?, NOW())`,
-        [oldCustomerId, '🔄 Warehouse Visit Updated', 'Your scheduled warehouse visit has been reassigned to another customer.', id]
-      );
-      
-      // Notify new customer
-      await createWarehouseScheduleNotification(
-        customerIdInt, 
-        warehouseIdInt, 
-        barcodes, 
-        scheduled_date,
-        warehouse[0].stock_point_name,
-        'Updated Products'
-      );
-    } else if (oldWarehouseId !== warehouseIdInt || oldBarcode !== barcodes[0]) {
-      // Notify customer about update
-      const warehouseName = warehouse[0].stock_point_name;
-      const scheduledDateTime = new Date(scheduled_date);
-      const formattedDate = scheduledDateTime.toLocaleDateString('en-US', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-      const formattedTime = scheduledDateTime.toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true
-      });
-      
-      await queryAsync(
-        `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
-         VALUES (?, 'customer', ?, ?, 'warehouse_schedule', ?, NOW())`,
-        [customerIdInt, '🔄 Warehouse Visit Updated', `Your warehouse visit has been updated. New details: ${warehouseName} on ${formattedDate} at ${formattedTime}. Barcodes: ${barcodes.join(', ')}`, id]
-      );
-    }
-    
-    // Send admin notification
-    if (global.sendAdminNotification) {
-      global.sendAdminNotification({
-        type: 'WAREHOUSE_SCHEDULE_UPDATED',
-        message: `Warehouse visit schedule #${id} updated with ${insertedIds.length} items`,
-        schedule_id: id,
-        timestamp: new Date().toISOString()
-      });
-    }
     
     res.json({ success: true, message: 'Warehouse schedule updated successfully', scheduleIds: insertedIds });
     
@@ -534,8 +431,6 @@ router.delete('/:id', async (req, res) => {
       });
     }
     
-    const { customer_id, barcode } = schedule[0];
-    
     const result = await queryAsync(
       'DELETE FROM visit_logs_warehouse_schedule WHERE id = ?', 
       [id]
@@ -543,23 +438,6 @@ router.delete('/:id', async (req, res) => {
     
     if (result.affectedRows > 0) {
       console.log(`✅ Schedule ${id} deleted successfully`);
-      
-      // Notify customer about cancellation
-      await queryAsync(
-        `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
-         VALUES (?, 'customer', ?, ?, 'warehouse_schedule', ?, NOW())`,
-        [customer_id, '❌ Warehouse Visit Cancelled', `Your warehouse visit (Barcode: ${barcode}) has been cancelled. Please contact support for more information.`, id]
-      );
-      
-      // Send admin notification
-      if (global.sendAdminNotification) {
-        global.sendAdminNotification({
-          type: 'WAREHOUSE_SCHEDULE_DELETED',
-          message: `Warehouse visit schedule #${id} deleted`,
-          schedule_id: id,
-          timestamp: new Date().toISOString()
-        });
-      }
     }
     
     res.json({ success: true, message: 'Warehouse schedule deleted successfully' });
@@ -628,7 +506,7 @@ router.get('/customer/:customerId', async (req, res) => {
         sp.location as warehouse_location
       FROM visit_logs_warehouse_schedule vlws
       LEFT JOIN stock_points sp ON vlws.warehouse_id = sp.stock_point_id
-      WHERE vlws.customer_id = ?
+      WHERE vlws.customer_account_id = ?
         AND vlws.status = 'scheduled'
       ORDER BY vlws.scheduled_date ASC
     `, [customerId]);
@@ -674,35 +552,6 @@ router.patch('/:id/status', async (req, res) => {
     }
     
     console.log(`✅ Schedule ${id} status updated to ${status}`);
-    
-    // Get customer info for notification
-    const schedule = await queryAsync(
-      'SELECT customer_id, barcode FROM visit_logs_warehouse_schedule WHERE id = ?',
-      [id]
-    );
-    
-    if (schedule.length > 0) {
-      const statusMessages = {
-        'completed': '✅ Warehouse Visit Completed',
-        'cancelled': '❌ Warehouse Visit Cancelled',
-        'scheduled': '📅 Warehouse Visit Rescheduled'
-      };
-      
-      const statusDetails = {
-        'completed': 'Your warehouse visit has been marked as completed.',
-        'cancelled': 'Your warehouse visit has been cancelled.',
-        'scheduled': 'Your warehouse visit has been rescheduled.'
-      };
-      
-      await queryAsync(
-        `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
-         VALUES (?, 'customer', ?, ?, 'warehouse_schedule', ?, NOW())`,
-        [schedule[0].customer_id, statusMessages[status] || 'Status Updated', 
-         `${statusDetails[status] || 'Status updated.'} (Barcode: ${schedule[0].barcode})`, id]
-      );
-      
-      console.log(`✅ Notification sent to customer ${schedule[0].customer_id}`);
-    }
     
     res.json({ 
       success: true, 
@@ -771,6 +620,117 @@ router.get('/account-details', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch account details' 
+    });
+  }
+});
+
+// PUT - Assign salesman to a visit schedule
+router.put('/:id/assign-salesman', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { salesman_id, salesman_name } = req.body;
+    
+    console.log(`📝 Assigning salesman to schedule ${id}:`, { salesman_id, salesman_name });
+    
+    // Validate required fields
+    if (!salesman_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Salesman ID is required'
+      });
+    }
+    
+    // Check if schedule exists
+    const existing = await queryAsync(
+      'SELECT * FROM visit_logs_warehouse_schedule WHERE id = ?',
+      [id]
+    );
+    
+    if (existing.length === 0) {
+      console.log(`❌ Schedule ${id} not found`);
+      return res.status(404).json({
+        success: false,
+        message: 'Schedule not found'
+      });
+    }
+    
+    // Validate salesman exists in account_details
+    const salesman = await queryAsync(
+      'SELECT account_id, account_name, account_group FROM account_details WHERE account_id = ? AND account_group = ?',
+      [salesman_id, 'SALESMAN']
+    );
+    
+    if (salesman.length === 0) {
+      console.log(`❌ Salesman with account_id ${salesman_id} not found or not a salesman`);
+      return res.status(400).json({
+        success: false,
+        message: `Invalid salesman selected. Account ID ${salesman_id} is not a salesman.`
+      });
+    }
+    
+    // Update the schedule with salesman_id and salesman_name
+    const result = await queryAsync(
+      `UPDATE visit_logs_warehouse_schedule 
+       SET salesman_id = ?, salesman_name = ?, updated_at = NOW() 
+       WHERE id = ?`,
+      [salesman_id, salesman_name || salesman[0].account_name, id]
+    );
+    
+    if (result.affectedRows === 0) {
+      console.log(`❌ Failed to update schedule ${id}`);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to assign salesman to schedule'
+      });
+    }
+    
+    console.log(`✅ Salesman assigned to schedule ${id} successfully`);
+    
+    res.json({
+      success: true,
+      message: 'Salesman assigned successfully',
+      data: {
+        schedule_id: id,
+        salesman_id: salesman_id,
+        salesman_name: salesman_name || salesman[0].account_name
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error assigning salesman:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to assign salesman: ' + error.message
+    });
+  }
+});
+
+// GET - Get all salesmen (for assign dropdown)
+router.get('/salesmen', async (req, res) => {
+  try {
+    console.log('📋 Fetching all salesmen...');
+    
+    const salesmen = await queryAsync(`
+      SELECT 
+        account_id,
+        account_name,
+        phone,
+        mobile,
+        email,
+        duty_start_time,
+        duty_end_time
+      FROM account_details 
+      WHERE account_group = 'SALESMAN'
+      ORDER BY account_name ASC
+    `);
+    
+    console.log(`✅ Found ${salesmen.length} salesmen`);
+    res.json(salesmen);
+  } catch (error) {
+    console.error('❌ Error fetching salesmen:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch salesmen'
     });
   }
 });

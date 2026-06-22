@@ -26,7 +26,7 @@ exports.saveAssignedSalesman = (req, res) => {
       return res.status(400).json({ message: "To salesman is required" });
     }
 
-    // Extract product codes from transfer_data for stock point update
+    // Extract product codes from transfer_data for user_id update
     const productCodes = transfer_data.map(item => item.PCode_BarCode).filter(code => code);
 
     assignedSalesmanModel.insert(
@@ -45,14 +45,15 @@ exports.saveAssignedSalesman = (req, res) => {
           return res.status(500).json({ message: "Error saving assigned salesman data", error: err });
         }
         
-        // After successful transfer, update stock points in opening_tags_entry
+        // After successful transfer, update user_id in opening_tags_entry
+        // Stock_Point remains unchanged
         if (productCodes.length > 0 && to_salesman_id) {
           assignedSalesmanModel.updateStockPointForSalesman(productCodes, to_salesman_id, (updateErr, updateResult) => {
             if (updateErr) {
-              console.error("Error updating stock points for salesman:", updateErr);
+              console.error("Error updating user_id for salesman:", updateErr);
               // Don't fail the whole transaction, just log the error
             }
-            console.log(`Updated stock point for ${updateResult?.updatedCount || 0} products to salesman`);
+            console.log(`Updated user_id for ${updateResult?.updatedCount || 0} products (Stock_Point unchanged)`);
             
             res.json({ 
               message: "Assigned to salesman completed successfully", 
@@ -150,7 +151,6 @@ exports.deleteAssignedTransfer = (req, res) => {
   });
 };
 
-// In assignedSalesmanController.js - already correct, but ensure this:
 exports.getLastAssignedNumber = (req, res) => {
   assignedSalesmanModel.getLastAssignedNumber((err, result) => {
     if (err) {
@@ -160,7 +160,6 @@ exports.getLastAssignedNumber = (req, res) => {
     res.json({ lastAssignedNumber: result });
   });
 };
-
 
 exports.getSalesmen = (req, res) => {
   assignedSalesmanModel.getSalesmen((err, results) => {
@@ -189,7 +188,6 @@ exports.updateStatus = (req, res) => {
     res.json({ message: "Status updated successfully" });
   });
 };
-
 
 exports.getAssignedProductsBySalesman = (req, res) => {
   const { salesman_id } = req.query;

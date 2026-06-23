@@ -389,7 +389,7 @@ const getNextPCodeBarCode = (req, res) => {
 // openingTagsController.js - Simplified version
 
 const updateOpeningTagsStatus = (req, res) => {
-    const { barcodes, status, stock_point } = req.body;
+    const { barcodes, status, stock_point, user_id } = req.body;
     
     if (!barcodes || !Array.isArray(barcodes) || barcodes.length === 0) {
         return res.status(400).json({ error: "Invalid barcodes array" });
@@ -402,10 +402,18 @@ const updateOpeningTagsStatus = (req, res) => {
     // Create placeholders for SQL query
     const placeholders = barcodes.map(() => '?').join(',');
     
-    // Update Status, Stock_Point, and set user_id to NULL
-    const sql = `UPDATE opening_tags_entry SET Status = ?, Stock_Point = ?, user_id = NULL WHERE PCode_BarCode IN (${placeholders})`;
+    // Update Status, Stock_Point, user_id, and Received_Status
+    // Also set Source to "ERP" when updating
+    const sql = `UPDATE opening_tags_entry 
+                 SET Status = ?, 
+                     Stock_Point = ?, 
+                     user_id = ?, 
+                     Received_Status = ?,
+                     Source = 'ERP'
+                 WHERE PCode_BarCode IN (${placeholders})`;
     
-    const values = [status, stock_point || "MAIN STOCK ROOM", ...barcodes];
+    // Values: status, stock_point, user_id (null), received_status ('pending'), barcodes
+    const values = [status, stock_point || "MAIN STOCK ROOM", user_id || null, "pending", ...barcodes];
     
     db.query(sql, values, (err, result) => {
         if (err) {
@@ -415,10 +423,53 @@ const updateOpeningTagsStatus = (req, res) => {
         
         res.status(200).json({ 
             message: "Opening tags updated successfully", 
-            affectedRows: result.affectedRows 
+            affectedRows: result.affectedRows,
+            received_status: "pending"
         });
     });
 };
+
+
+// Update Received Status - NEW
+const updateReceivedStatus = (req, res) => {
+    const { barcodes, received_status } = req.body;
+    
+    if (!barcodes || !Array.isArray(barcodes) || barcodes.length === 0) {
+        return res.status(400).json({ error: "Invalid barcodes array" });
+    }
+    
+    if (!received_status || !['pending', 'received'].includes(received_status)) {
+        return res.status(400).json({ error: "Invalid status. Must be 'pending' or 'received'" });
+    }
+    
+    // Create placeholders for SQL query
+    const placeholders = barcodes.map(() => '?').join(',');
+    
+    // Update only Received_Status
+    const sql = `UPDATE opening_tags_entry 
+                 SET Received_Status = ?
+                 WHERE PCode_BarCode IN (${placeholders})`;
+    
+    const values = [received_status, ...barcodes];
+    
+    db.query(sql, values, (err, result) => {
+        if (err) {
+            console.error("Database error updating received status:", err);
+            return res.status(500).json({ error: "Database update failed", details: err });
+        }
+        
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "No matching records found" });
+        }
+        
+        res.status(200).json({ 
+            message: "Received status updated successfully", 
+            affectedRows: result.affectedRows,
+            received_status: received_status
+        });
+    });
+};
+
 
 
 // Make sure to export it
@@ -432,5 +483,6 @@ module.exports = {
     getLastPcode,
     getNextPCodeBarCode,
     deleteOpeningTag,
-    updateOpeningTagsStatus 
+    updateOpeningTagsStatus,
+    updateReceivedStatus // ✅ NEW: Export the function
 };

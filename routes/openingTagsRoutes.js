@@ -12,6 +12,9 @@ router.delete('/delete/opening-tags-entry/:opentag_id', openingTagsController.de
 // Add this new route
 router.put('/update-opening-tags-status', openingTagsController.updateOpeningTagsStatus);
 
+// ✅ NEW: Update received status
+router.put('/update-received-status', openingTagsController.updateReceivedStatus);
+
 
 router.post('/post/subcategory', openingTagsController.createSubcategory);
 router.get('/get/subcategories', openingTagsController.getAllSubcategories);

@@ -409,7 +409,7 @@ const updateOpeningTagsStatus = (req, res) => {
                      Stock_Point = ?, 
                      user_id = ?, 
                      Received_Status = ?,
-                     Source = 'ERP'
+                     Source = 'Purchase'
                  WHERE PCode_BarCode IN (${placeholders})`;
     
     // Values: status, stock_point, user_id (null), received_status ('pending'), barcodes

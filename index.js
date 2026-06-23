@@ -53,6 +53,7 @@ const stockTransferRoutes = require("./routes/stockTransferRoutes");
 const assignedSalesmanRoutes = require("./routes/assignedSalesmanRoutes");
 const receivedSalesmanRoutes = require("./routes/receivedSalesmanRoutes");
 const visitLogsWarehouseScheduleRoutes = require('./routes/visitLogsWarehouseRoutes');
+const returnToMainStockRoutes = require("./routes/returnToMainStockRoutes");
 
 
 
@@ -125,7 +126,9 @@ app.use('/', warehouseRoutes);
 app.use("/api/stock-transfer", stockTransferRoutes);
 app.use("/api/assigned-salesman", assignedSalesmanRoutes);
 app.use("/api/received-salesman", receivedSalesmanRoutes);
+app.use("/api/return-to-main-stock", returnToMainStockRoutes);
 app.use('/api/visit-logs-warehouse-schedule', visitLogsWarehouseScheduleRoutes);
+
 
 // Start the server
 app.listen(PORT, () => {

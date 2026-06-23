@@ -142,7 +142,7 @@ exports.insert = (
         parseFloat(item.making_charges) || 0,
         parseFloat(item.stone_price) || 0,
         parseFloat(item.total_price) || 0,
-        imagePath, // Store the image path
+        imagePath,
         item.remarks || null,
         new Date()
       ];
@@ -155,6 +155,50 @@ exports.insert = (
       }
       
       callback(null, { transfer_id: assignedId, transfer_number: assigned_number });
+    });
+  });
+};
+
+// FIXED: Only update user_id, NOT Stock_Point
+exports.updateStockPointForSalesman = (productCodes, salesmanId, callback) => {
+  if (!productCodes || productCodes.length === 0) {
+    return callback(null, { message: "No products to update" });
+  }
+
+  const getSalesmanSql = `
+    SELECT account_name, account_id FROM account_details 
+    WHERE account_id = ?
+  `;
+
+  db.query(getSalesmanSql, [salesmanId], (err, salesmanResult) => {
+    if (err) {
+      console.error("Error fetching salesman:", err);
+      return callback(err);
+    }
+
+    if (salesmanResult.length === 0) {
+      return callback(new Error("Salesman not found"));
+    }
+
+    const userId = salesmanResult[0].account_id;
+
+    const placeholders = productCodes.map(() => '?').join(',');
+    // IMPORTANT: Only update user_id and Status, NOT Stock_Point
+    const updateSql = `
+      UPDATE opening_tags_entry 
+      SET user_id = ?, Status = 'Assigned' 
+      WHERE PCode_BarCode IN (${placeholders})
+    `;
+
+    const params = [userId, ...productCodes];
+
+    db.query(updateSql, params, (updateErr, result) => {
+      if (updateErr) {
+        console.error("Error updating user_id for salesman:", updateErr);
+        return callback(updateErr);
+      }
+      console.log(`Updated user_id to ${userId} for ${result.affectedRows} products (Stock_Point unchanged)`);
+      callback(null, { updatedCount: result.affectedRows });
     });
   });
 };
@@ -313,49 +357,6 @@ exports.getSalesmen = (callback) => {
     ORDER BY account_name
   `;
   db.query(sql, callback);
-};
-
-exports.updateStockPointForSalesman = (productCodes, salesmanId, callback) => {
-  if (!productCodes || productCodes.length === 0) {
-    return callback(null, { message: "No products to update" });
-  }
-
-  const getSalesmanSql = `
-    SELECT account_name, account_id FROM account_details 
-    WHERE account_id = ?
-  `;
-
-  db.query(getSalesmanSql, [salesmanId], (err, salesmanResult) => {
-    if (err) {
-      console.error("Error fetching salesman:", err);
-      return callback(err);
-    }
-
-    if (salesmanResult.length === 0) {
-      return callback(new Error("Salesman not found"));
-    }
-
-    const salesmanName = salesmanResult[0].account_name;
-    const userId = salesmanResult[0].account_id;
-
-    const placeholders = productCodes.map(() => '?').join(',');
-    const updateSql = `
-      UPDATE opening_tags_entry 
-      SET Stock_Point = ?, user_id = ?, Status = 'Assigned' 
-      WHERE PCode_BarCode IN (${placeholders})
-    `;
-
-    const params = [salesmanName, userId, ...productCodes];
-
-    db.query(updateSql, params, (updateErr, result) => {
-      if (updateErr) {
-        console.error("Error updating stock point for salesman:", updateErr);
-        return callback(updateErr);
-      }
-      console.log(`Updated stock point to '${salesmanName}' and user_id to ${userId} for ${result.affectedRows} products`);
-      callback(null, { updatedCount: result.affectedRows });
-    });
-  });
 };
 
 exports.getByDateRange = (start_date, end_date, callback) => {

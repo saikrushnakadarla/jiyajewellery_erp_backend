@@ -329,6 +329,8 @@ exports.getLastReturnNumber = (callback) => {
 // =============================================
 // UPDATE STOCK POINT: Update opening_tags_entry
 // =============================================
+// returnToMainStockModel.js - Fix updateStockPointForReturn
+
 exports.updateStockPointForReturn = (returnData, callback) => {
     if (!returnData || returnData.length === 0) {
         return callback(null, { message: "No products to update" });
@@ -345,32 +347,50 @@ exports.updateStockPointForReturn = (returnData, callback) => {
                 return resolve();
             }
 
-            // Determine status and Received_Status based on is_packet_selection
-            // When returning to main stock, we mark as Available and set Received_Status to 'received'
-            const status = 'Available';
-            const receivedStatus = 'received'; // Mark as received in main stock
-            const userId = null; // Set user_id to NULL when returning to main stock
-            const stockPoint = 'MAIN STOCK ROOM';
-
-            const updateSql = `
-                UPDATE opening_tags_entry 
-                SET Stock_Point = ?, user_id = ?, Status = ?, Received_Status = ? 
-                WHERE PCode_BarCode = ?
-            `;
-
-            const params = [stockPoint, userId, status, receivedStatus, productCode];
-
-            db.query(updateSql, params, (updateErr, result) => {
-                if (updateErr) {
-                    console.error(`Error updating product ${productCode}:`, updateErr);
-                    errorOccurred = true;
-                    return reject(updateErr);
+            // IMPORTANT: When returning to main stock, we should NOT change the status
+            // The status should remain as "Selected" and Received_Status as "pending"
+            // Only update Stock_Point to MAIN STOCK ROOM and keep other values as they are
+            
+            // Get the current values from the database first to preserve them
+            const getCurrentSql = `SELECT Status, Received_Status, user_id FROM opening_tags_entry WHERE PCode_BarCode = ?`;
+            
+            db.query(getCurrentSql, [productCode], (getErr, getResults) => {
+                if (getErr) {
+                    console.error(`Error getting current values for ${productCode}:`, getErr);
+                    return reject(getErr);
                 }
-                if (result.affectedRows > 0) {
-                    updatedCount++;
+                
+                if (getResults.length === 0) {
+                    console.log(`Product ${productCode} not found`);
+                    return resolve();
                 }
-                console.log(`Updated ${productCode}: Stock_Point='${stockPoint}', user_id=${userId}, Status='${status}', Received_Status='${receivedStatus}'`);
-                resolve();
+                
+                const currentStatus = getResults[0].Status || 'Selected';
+                const currentReceivedStatus = getResults[0].Received_Status || 'pending';
+                const currentUserId = getResults[0].user_id || null;
+                
+                // Only update Stock_Point, keep everything else as is
+                // This preserves the "Selected" status and "pending" Received_Status
+                const updateSql = `
+                    UPDATE opening_tags_entry 
+                    SET Stock_Point = ?
+                    WHERE PCode_BarCode = ?
+                `;
+
+                const params = ['MAIN STOCK ROOM', productCode];
+
+                db.query(updateSql, params, (updateErr, result) => {
+                    if (updateErr) {
+                        console.error(`Error updating product ${productCode}:`, updateErr);
+                        errorOccurred = true;
+                        return reject(updateErr);
+                    }
+                    if (result.affectedRows > 0) {
+                        updatedCount++;
+                    }
+                    console.log(`Updated ${productCode}: Stock_Point='MAIN STOCK ROOM', Status='${currentStatus}', Received_Status='${currentReceivedStatus}'`);
+                    resolve();
+                });
             });
         });
     });

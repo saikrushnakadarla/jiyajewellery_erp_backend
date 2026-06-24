@@ -388,8 +388,10 @@ const getNextPCodeBarCode = (req, res) => {
 
 // openingTagsController.js - Simplified version
 
+// openingTagsController.js - Fix the updateOpeningTagsStatus function
+
 const updateOpeningTagsStatus = (req, res) => {
-    const { barcodes, status, stock_point, user_id } = req.body;
+    const { barcodes, status, stock_point, user_id, received_status } = req.body;
     
     if (!barcodes || !Array.isArray(barcodes) || barcodes.length === 0) {
         return res.status(400).json({ error: "Invalid barcodes array" });
@@ -402,18 +404,37 @@ const updateOpeningTagsStatus = (req, res) => {
     // Create placeholders for SQL query
     const placeholders = barcodes.map(() => '?').join(',');
     
-    // Update Status, Stock_Point, user_id, and Received_Status
-    // Also set Source to "ERP" when updating
-    const sql = `UPDATE opening_tags_entry 
-                 SET Status = ?, 
-                     Stock_Point = ?, 
-                     user_id = ?, 
-                     Received_Status = ?,
-                     Source = 'Purchase'
-                 WHERE PCode_BarCode IN (${placeholders})`;
+    // Build the SET clause dynamically
+    let setClause = `Status = ?`;
+    let values = [status];
     
-    // Values: status, stock_point, user_id (null), received_status ('pending'), barcodes
-    const values = [status, stock_point || "MAIN STOCK ROOM", user_id || null, "pending", ...barcodes];
+    // Add Stock_Point if provided
+    if (stock_point !== undefined) {
+        setClause += `, Stock_Point = ?`;
+        values.push(stock_point);
+    }
+    
+    // Add user_id if provided (can be null)
+    if (user_id !== undefined) {
+        setClause += `, user_id = ?`;
+        values.push(user_id);
+    }
+    
+    // Add Received_Status if provided, otherwise set to 'pending' by default
+    const receivedStatus = received_status || 'pending';
+    setClause += `, Received_Status = ?`;
+    values.push(receivedStatus);
+    
+    // Also set Source to 'ERP' when updating
+    setClause += `, Source = ?`;
+    values.push('ERP');
+    
+    // Add the barcodes to values
+    values = values.concat(barcodes);
+    
+    const sql = `UPDATE opening_tags_entry 
+                 SET ${setClause}
+                 WHERE PCode_BarCode IN (${placeholders})`;
     
     db.query(sql, values, (err, result) => {
         if (err) {
@@ -421,10 +442,17 @@ const updateOpeningTagsStatus = (req, res) => {
             return res.status(500).json({ error: "Database update failed", details: err });
         }
         
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "No matching records found" });
+        }
+        
         res.status(200).json({ 
             message: "Opening tags updated successfully", 
             affectedRows: result.affectedRows,
-            received_status: "pending"
+            status: status,
+            received_status: receivedStatus,
+            stock_point: stock_point || null,
+            user_id: user_id || null
         });
     });
 };

@@ -1,4 +1,76 @@
 const returnToMainStockModel = require("../models/returnToMainStockModel");
+const fs = require('fs');
+const path = require('path');
+
+/**
+ * Save base64 image to file and return the relative URL path.
+ * If already a file path, return it unchanged.
+ */
+const saveImageFile = (base64String, returnNumber, type = 'item', itemIndex = 0) => {
+  if (!base64String) return null;
+
+  // Already a file path (not base64)
+  if (!base64String.startsWith('data:image')) {
+    console.log(`Image already a file path: ${base64String}`);
+    return base64String;
+  }
+
+  try {
+    // Extract image type and data
+    const matches = base64String.match(/^data:image\/(\w+);base64,(.+)$/);
+    if (!matches) {
+      console.error('Invalid base64 image format');
+      return null;
+    }
+
+    const imageType = matches[1]; // e.g., jpg, png, jpeg
+    const imageData = matches[2];
+    const buffer = Buffer.from(imageData, 'base64');
+
+    // FIXED: Correct path - go up one level to project root, then into uploads/return-to-main-stock
+    const uploadDir = path.join(__dirname, '../uploads/return-to-main-stock');
+    console.log(`📁 Upload directory path: ${uploadDir}`);
+    
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+      console.log(`✅ Created directory: ${uploadDir}`);
+    }
+
+    // Generate unique filename based on type
+    const timestamp = Date.now();
+    let filename;
+    if (type === 'capture') {
+      filename = `capture_${returnNumber}_${timestamp}.${imageType}`;
+    } else {
+      filename = `return_${returnNumber}_item_${itemIndex}_${timestamp}.${imageType}`;
+    }
+    const filePath = path.join(uploadDir, filename);
+    console.log(`📁 Saving image to: ${filePath}`);
+
+    // Write file
+    fs.writeFileSync(filePath, buffer);
+    console.log(`✅ Image saved: ${filePath}`);
+
+    // Return relative URL for database (with leading slash)
+    return `/uploads/return-to-main-stock/${filename}`;
+  } catch (error) {
+    console.error('❌ Error saving image:', error.message);
+    console.error('❌ Stack trace:', error.stack);
+    return null;
+  }
+};
+
+/**
+ * Generate a unique return number if not provided.
+ */
+const generateReturnNumber = () => {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+  return `RTN${year}${month}${day}${random}`;
+};
 
 // =============================================
 // SAVE: Save return to main stock
@@ -15,7 +87,8 @@ exports.saveReturnToMainStock = (req, res) => {
             created_by,
             from_user_id,
             to_user_id,
-            assigned_ids = [] // IDs from assigned_salesman to delete
+            assigned_ids = [],
+            capture_image  // <-- Capture image from Customer Details
         } = req.body;
 
         if (!return_data || !Array.isArray(return_data) || return_data.length === 0) {
@@ -26,17 +99,49 @@ exports.saveReturnToMainStock = (req, res) => {
             return res.status(400).json({ message: "From stock point is required" });
         }
 
-        // Insert return records
+        // Determine return number
+        const return_number = reference_number || generateReturnNumber();
+        console.log(`📦 Processing return: ${return_number}`);
+
+        // --- Process capture image (single image for the whole transfer) ---
+        let savedCaptureImagePath = null;
+        if (capture_image) {
+            console.log(`📷 Saving capture image for return ${return_number}...`);
+            console.log(`📷 Capture image type: ${typeof capture_image}, length: ${capture_image ? capture_image.length : 0}`);
+            savedCaptureImagePath = saveImageFile(capture_image, return_number, 'capture');
+            console.log(`📷 Capture image saved at: ${savedCaptureImagePath}`);
+        } else {
+            console.log(`📷 No capture image provided`);
+        }
+
+        // --- Process images for each item: convert base64 to file paths ---
+        const processedReturnData = return_data.map((item, index) => {
+            const processedItem = { ...item };
+
+            // If item has its own image
+            if (item.image) {
+                console.log(`🖼️ Item ${index} has image, saving...`);
+                const savedPath = saveImageFile(item.image, return_number, 'item', index);
+                processedItem.image = savedPath;
+            } else {
+                console.log(`🖼️ Item ${index} has no image`);
+            }
+
+            return processedItem;
+        });
+
+        // Insert return records with capture image
         returnToMainStockModel.insert(
-            return_data,
+            processedReturnData,
             from_stock_point_id,
-            to_stock_point_id || null, // Usually NULL for main stock
+            to_stock_point_id || null,
             return_date,
-            reference_number,
+            return_number,
             remarks,
             created_by,
             from_user_id,
             to_user_id,
+            savedCaptureImagePath,  // <-- Pass capture image path
             (err, result) => {
                 if (err) {
                     console.error("Database error:", err);
@@ -44,9 +149,9 @@ exports.saveReturnToMainStock = (req, res) => {
                 }
                 
                 // After successful transfer, update opening_tags_entry
-                if (return_data.length > 0) {
+                if (processedReturnData.length > 0) {
                     returnToMainStockModel.updateStockPointForReturn(
-                        return_data,
+                        processedReturnData,
                         (updateErr, updateResult) => {
                             if (updateErr) {
                                 console.error("Error updating stock points:", updateErr);
@@ -65,6 +170,7 @@ exports.saveReturnToMainStock = (req, res) => {
                                         message: "Return to main stock completed successfully", 
                                         return_id: result.return_id,
                                         return_number: result.return_number,
+                                        capture_image: savedCaptureImagePath,
                                         items_updated: updateResult?.updatedCount || 0,
                                         records_deleted: deleteResult?.deletedCount || 0
                                     });
@@ -74,6 +180,7 @@ exports.saveReturnToMainStock = (req, res) => {
                                     message: "Return to main stock completed successfully", 
                                     return_id: result.return_id,
                                     return_number: result.return_number,
+                                    capture_image: savedCaptureImagePath,
                                     items_updated: updateResult?.updatedCount || 0
                                 });
                             }
@@ -83,13 +190,15 @@ exports.saveReturnToMainStock = (req, res) => {
                     res.json({ 
                         message: "Return to main stock completed successfully", 
                         return_id: result.return_id,
-                        return_number: result.return_number
+                        return_number: result.return_number,
+                        capture_image: savedCaptureImagePath
                     });
                 }
             }
         );
     } catch (error) {
         console.error("Error processing request:", error.message);
+        console.error("Stack trace:", error.stack);
         res.status(400).json({ message: "Invalid data format", error: error.message });
     }
 };

@@ -10,16 +10,24 @@ exports.insert = (
   created_by,
   from_user_id = null,
   to_user_id = null,
+  capture_image = null,  // <-- Capture image path
   callback
 ) => {
+  // Handle optional parameters
   if (typeof from_user_id === 'function') {
     callback = from_user_id;
     from_user_id = null;
     to_user_id = null;
+    capture_image = null;
   }
   if (typeof to_user_id === 'function' && callback) {
     callback = to_user_id;
     to_user_id = null;
+    capture_image = null;
+  }
+  if (typeof capture_image === 'function' && callback) {
+    callback = capture_image;
+    capture_image = null;
   }
 
   if (!Array.isArray(transfer_data) || transfer_data.length === 0) {
@@ -40,6 +48,7 @@ exports.insert = (
     totalNetWeight += parseFloat(item.net_weight) || 0;
   });
 
+  // Insert main transfer record with capture_image column
   const insertTransferSql = `
     INSERT INTO received_salesman_transfers (
       received_number,
@@ -54,10 +63,11 @@ exports.insert = (
       total_net_weight,
       status,
       remarks,
+      capture_image,
       created_by,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
   `;
 
   const transferParams = [
@@ -73,6 +83,7 @@ exports.insert = (
     totalNetWeight,
     'completed',
     remarks || null,
+    capture_image || null,  // <-- Store capture image path
     created_by || null
   ];
 
@@ -111,7 +122,7 @@ exports.insert = (
     `;
 
     const itemValues = transfer_data.map(item => {
-      // Process image path similar to assigned_salesman
+      // Process image path
       let imagePath = item.image || null;
       if (imagePath && imagePath.startsWith('http')) {
         const urlObj = new URL(imagePath);
@@ -140,7 +151,7 @@ exports.insert = (
         parseFloat(item.making_charges) || 0,
         parseFloat(item.stone_price) || 0,
         parseFloat(item.total_price) || 0,
-        imagePath, // Add image path
+        imagePath,
         item.remarks || null,
         new Date()
       ];
@@ -152,11 +163,14 @@ exports.insert = (
         return callback(itemsErr);
       }
       
+      console.log(`✅ Received ${received_number} saved with ${itemValues.length} items.`);
+      console.log(`📷 Capture image: ${capture_image || 'None'}`);
       callback(null, { transfer_id: receivedId, transfer_number: received_number });
     });
   });
 };
 
+// GET ALL with capture_image
 exports.getAll = (callback) => {
   const sql = `
     SELECT 
@@ -173,6 +187,7 @@ exports.getAll = (callback) => {
       rst.total_net_weight,
       rst.status,
       rst.remarks,
+      rst.capture_image,
       rst.created_by,
       rst.created_at,
       rst.updated_at,
@@ -187,6 +202,7 @@ exports.getAll = (callback) => {
   db.query(sql, callback);
 };
 
+// GET BY ID with capture_image
 exports.getById = (received_id, callback) => {
   const mainSql = `
     SELECT 
@@ -203,6 +219,7 @@ exports.getById = (received_id, callback) => {
       rst.total_net_weight,
       rst.status,
       rst.remarks,
+      rst.capture_image,
       rst.created_by,
       rst.created_at,
       rst.updated_at,

@@ -6,7 +6,7 @@ const path = require('path');
  * Save base64 image to file and return the relative URL path.
  * If already a file path, return it unchanged.
  */
-const saveImageFile = (base64String, transferNumber, itemIndex) => {
+const saveImageFile = (base64String, transferNumber, type = 'item', itemIndex = 0) => {
   if (!base64String) return null;
 
   // Already a file path (not base64)
@@ -34,9 +34,13 @@ const saveImageFile = (base64String, transferNumber, itemIndex) => {
       console.log(`Created directory: ${uploadDir}`);
     }
 
-    // Generate unique filename
-    const timestamp = Date.now();
-    const filename = `transfer_${transferNumber}_item_${itemIndex}_${timestamp}.${imageType}`;
+    // Generate unique filename based on type
+    let filename;
+    if (type === 'capture') {
+      filename = `capture_${transferNumber}_${Date.now()}.${imageType}`;
+    } else {
+      filename = `transfer_${transferNumber}_item_${itemIndex}_${Date.now()}.${imageType}`;
+    }
     const filePath = path.join(uploadDir, filename);
 
     // Write file
@@ -79,7 +83,8 @@ exports.saveStockTransfer = (req, res) => {
       remarks,
       created_by,
       from_user_id,
-      to_user_id
+      to_user_id,
+      capture_image  // <-- NEW: capture image from Customer Details
     } = req.body;
 
     // --- Validation ---
@@ -95,16 +100,23 @@ exports.saveStockTransfer = (req, res) => {
     const transfer_number = reference_number || generateTransferNumber();
     console.log(`📦 Processing transfer: ${transfer_number}`);
 
-    // --- Process images: convert base64 to file paths ---
+    // --- Process capture image (single image for the whole transfer) ---
+    let savedCaptureImagePath = null;
+    if (capture_image) {
+      console.log(`📷 Saving capture image for transfer ${transfer_number}...`);
+      savedCaptureImagePath = saveImageFile(capture_image, transfer_number, 'capture');
+      console.log(`📷 Capture image saved at: ${savedCaptureImagePath}`);
+    }
+
+    // --- Process images for each item: convert base64 to file paths ---
     const processedTransferData = transfer_data.map((item, index) => {
       const processedItem = { ...item };
 
+      // If item has its own image (from Product Details)
       if (item.image) {
         console.log(`🖼️ Item ${index} has image, saving...`);
-        const savedPath = saveImageFile(item.image, transfer_number, index);
-        processedItem.image = savedPath; // store path, not base64
-      } else {
-        console.log(`ℹ️ Item ${index} has no image.`);
+        const savedPath = saveImageFile(item.image, transfer_number, 'item', index);
+        processedItem.image = savedPath;
       }
 
       return processedItem;
@@ -128,6 +140,7 @@ exports.saveStockTransfer = (req, res) => {
       created_by,
       from_user_id,
       to_user_id,
+      savedCaptureImagePath,  // <-- NEW: pass capture image path
       (err, result) => {
         if (err) {
           console.error("❌ Database error:", err);
@@ -146,6 +159,7 @@ exports.saveStockTransfer = (req, res) => {
               message: "Stock transfer completed successfully",
               transfer_id: result.transfer_id,
               transfer_number: result.transfer_number,
+              capture_image: savedCaptureImagePath,
               stock_points_updated: updateResult?.updatedCount || 0
             });
           });
@@ -153,7 +167,8 @@ exports.saveStockTransfer = (req, res) => {
           res.json({
             message: "Stock transfer completed successfully",
             transfer_id: result.transfer_id,
-            transfer_number: result.transfer_number
+            transfer_number: result.transfer_number,
+            capture_image: savedCaptureImagePath
           });
         }
       }
@@ -260,15 +275,5 @@ exports.deleteStockTransfer = (req, res) => {
     }
 
     res.json({ message: "Stock transfer deleted successfully" });
-  });
-};
-
-exports.getLastTransferNumber = (req, res) => {
-  stockTransferModel.getLastTransferNumber((err, result) => {
-    if (err) {
-      console.error("Error fetching last transfer number:", err);
-      return res.status(500).json({ message: "Error fetching last transfer number" });
-    }
-    res.json({ lastTransferNumber: result });
   });
 };

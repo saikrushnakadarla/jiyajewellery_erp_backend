@@ -16,17 +16,24 @@ exports.insert = (
   created_by,
   from_user_id = null,
   to_user_id = null,
+  capture_image = null,  // <-- NEW: capture image path
   callback
 ) => {
-  // Handle optional parameters (if called with fewer args)
+  // Handle optional parameters
   if (typeof from_user_id === 'function') {
     callback = from_user_id;
     from_user_id = null;
     to_user_id = null;
+    capture_image = null;
   }
   if (typeof to_user_id === 'function' && callback) {
     callback = to_user_id;
     to_user_id = null;
+    capture_image = null;
+  }
+  if (typeof capture_image === 'function' && callback) {
+    callback = capture_image;
+    capture_image = null;
   }
 
   if (!Array.isArray(transfer_data) || transfer_data.length === 0) {
@@ -48,7 +55,7 @@ exports.insert = (
     totalNetWeight += parseFloat(item.net_weight) || 0;
   });
 
-  // Insert main transfer record
+  // Insert main transfer record with capture_image
   const insertTransferSql = `
     INSERT INTO stock_transfers (
       transfer_number,
@@ -65,10 +72,11 @@ exports.insert = (
       total_net_weight,
       status,
       remarks,
+      capture_image,
       created_by,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
   `;
 
   const transferParams = [
@@ -86,6 +94,7 @@ exports.insert = (
     totalNetWeight,
     'completed',
     remarks || null,
+    capture_image || null,  // <-- NEW: capture image path
     created_by || null
   ];
 
@@ -153,6 +162,7 @@ exports.insert = (
       }
 
       console.log(`✅ Transfer ${transfer_number} saved with ${itemValues.length} items.`);
+      console.log(`📷 Capture image: ${capture_image || 'None'}`);
       callback(null, { transfer_id: transferId, transfer_number: transfer_number });
     });
   });

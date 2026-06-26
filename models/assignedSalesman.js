@@ -10,16 +10,24 @@ exports.insert = (
   created_by,
   from_user_id = null,
   to_user_id = null,
+  capture_image = null,  // Capture image path
   callback
 ) => {
+  // Handle optional parameters
   if (typeof from_user_id === 'function') {
     callback = from_user_id;
     from_user_id = null;
     to_user_id = null;
+    capture_image = null;
   }
   if (typeof to_user_id === 'function' && callback) {
     callback = to_user_id;
     to_user_id = null;
+    capture_image = null;
+  }
+  if (typeof capture_image === 'function' && callback) {
+    callback = capture_image;
+    capture_image = null;
   }
 
   if (!Array.isArray(transfer_data) || transfer_data.length === 0) {
@@ -40,6 +48,7 @@ exports.insert = (
     totalNetWeight += parseFloat(item.net_weight) || 0;
   });
 
+  // Insert main transfer record with capture_image column
   const insertTransferSql = `
     INSERT INTO assigned_salesman_transfers (
       assigned_number,
@@ -54,10 +63,11 @@ exports.insert = (
       total_net_weight,
       status,
       remarks,
+      capture_image,
       created_by,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
   `;
 
   const transferParams = [
@@ -73,6 +83,7 @@ exports.insert = (
     totalNetWeight,
     'completed',
     remarks || null,
+    capture_image || null,  // Store capture image path
     created_by || null
   ];
 
@@ -112,14 +123,10 @@ exports.insert = (
     const itemValues = transfer_data.map(item => {
       // Ensure image path is properly stored
       let imagePath = item.image || null;
-      // If image is a full URL, extract just the path or keep as is
       if (imagePath && imagePath.startsWith('http')) {
-        // Keep the full URL or extract path as needed
-        // For storage, we want the relative path
         const urlObj = new URL(imagePath);
         imagePath = urlObj.pathname;
       }
-      // If image path doesn't start with /, add it
       if (imagePath && !imagePath.startsWith('/') && !imagePath.startsWith('http')) {
         imagePath = '/' + imagePath;
       }
@@ -154,6 +161,8 @@ exports.insert = (
         return callback(itemsErr);
       }
       
+      console.log(`✅ Assignment ${assigned_number} saved with ${itemValues.length} items.`);
+      console.log(`📷 Capture image: ${capture_image || 'None'}`);
       callback(null, { transfer_id: assignedId, transfer_number: assigned_number });
     });
   });
@@ -219,6 +228,7 @@ exports.getAll = (callback) => {
       ast.total_net_weight,
       ast.status,
       ast.remarks,
+      ast.capture_image,
       ast.created_by,
       ast.created_at,
       ast.updated_at,
@@ -249,6 +259,7 @@ exports.getById = (assigned_id, callback) => {
       ast.total_net_weight,
       ast.status,
       ast.remarks,
+      ast.capture_image,
       ast.created_by,
       ast.created_at,
       ast.updated_at,
@@ -375,6 +386,7 @@ exports.getByDateRange = (start_date, end_date, callback) => {
       ast.total_net_weight,
       ast.status,
       ast.remarks,
+      ast.capture_image,
       ast.created_by,
       ast.created_at,
       ast.updated_at,
@@ -405,6 +417,7 @@ exports.getByStatus = (status, callback) => {
       ast.total_net_weight,
       ast.status,
       ast.remarks,
+      ast.capture_image,
       ast.created_by,
       ast.created_at,
       ast.updated_at,

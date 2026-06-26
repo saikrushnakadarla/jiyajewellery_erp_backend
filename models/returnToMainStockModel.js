@@ -1,7 +1,7 @@
 const db = require("../db");
 
 // =============================================
-// INSERT: Save return to main stock
+// INSERT: Save return to main stock with capture image
 // =============================================
 exports.insert = (
     return_data,
@@ -13,16 +13,23 @@ exports.insert = (
     created_by,
     from_user_id = null,
     to_user_id = null,
+    capture_image = null,  // <-- Capture image path
     callback
 ) => {
     if (typeof from_user_id === 'function') {
         callback = from_user_id;
         from_user_id = null;
         to_user_id = null;
+        capture_image = null;
     }
     if (typeof to_user_id === 'function' && callback) {
         callback = to_user_id;
         to_user_id = null;
+        capture_image = null;
+    }
+    if (typeof capture_image === 'function' && callback) {
+        callback = capture_image;
+        capture_image = null;
     }
 
     if (!Array.isArray(return_data) || return_data.length === 0) {
@@ -43,6 +50,7 @@ exports.insert = (
         totalNetWeight += parseFloat(item.net_weight) || 0;
     });
 
+    // Insert main return record with capture_image column
     const insertReturnSql = `
         INSERT INTO return_to_main_stock_transfers (
             return_number,
@@ -57,10 +65,11 @@ exports.insert = (
             total_net_weight,
             status,
             remarks,
+            capture_image,
             created_by,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
     `;
 
     const returnParams = [
@@ -76,6 +85,7 @@ exports.insert = (
         totalNetWeight,
         'completed',
         remarks || null,
+        capture_image || null,  // <-- Store capture image path
         created_by || null
     ];
 
@@ -155,13 +165,15 @@ exports.insert = (
                 return callback(itemsErr);
             }
             
+            console.log(`✅ Return ${return_number} saved with ${itemValues.length} items.`);
+            console.log(`📷 Capture image: ${capture_image || 'None'}`);
             callback(null, { return_id: returnId, return_number: return_number });
         });
     });
 };
 
 // =============================================
-// GET ALL: Get all return transfers
+// GET ALL: Get all return transfers with capture_image
 // =============================================
 exports.getAll = (callback) => {
     const sql = `
@@ -179,6 +191,7 @@ exports.getAll = (callback) => {
             rt.total_net_weight,
             rt.status,
             rt.remarks,
+            rt.capture_image,
             rt.created_by,
             rt.created_at,
             rt.updated_at,
@@ -195,7 +208,7 @@ exports.getAll = (callback) => {
 };
 
 // =============================================
-// GET BY ID: Get return transfer by ID
+// GET BY ID: Get return transfer by ID with capture_image
 // =============================================
 exports.getById = (return_id, callback) => {
     const mainSql = `
@@ -213,6 +226,7 @@ exports.getById = (return_id, callback) => {
             rt.total_net_weight,
             rt.status,
             rt.remarks,
+            rt.capture_image,
             rt.created_by,
             rt.created_at,
             rt.updated_at,
@@ -329,8 +343,6 @@ exports.getLastReturnNumber = (callback) => {
 // =============================================
 // UPDATE STOCK POINT: Update opening_tags_entry
 // =============================================
-// returnToMainStockModel.js - Fix updateStockPointForReturn
-
 exports.updateStockPointForReturn = (returnData, callback) => {
     if (!returnData || returnData.length === 0) {
         return callback(null, { message: "No products to update" });

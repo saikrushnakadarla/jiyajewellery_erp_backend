@@ -1,4 +1,76 @@
 const assignedSalesmanModel = require("../models/assignedSalesman");
+const fs = require('fs');
+const path = require('path');
+
+/**
+ * Save base64 image to file and return the relative URL path.
+ * If already a file path, return it unchanged.
+ */
+const saveImageFile = (base64String, assignedNumber, type = 'item', itemIndex = 0) => {
+  if (!base64String) return null;
+
+  // Already a file path (not base64) - return as is
+  if (!base64String.startsWith('data:image')) {
+    console.log(`Image already a file path: ${base64String}`);
+    return base64String;
+  }
+
+  try {
+    // Extract image type and data
+    const matches = base64String.match(/^data:image\/(\w+);base64,(.+)$/);
+    if (!matches) {
+      console.error('Invalid base64 image format');
+      return null;
+    }
+
+    const imageType = matches[1]; // e.g., jpg, png, jpeg
+    const imageData = matches[2];
+    const buffer = Buffer.from(imageData, 'base64');
+
+    // Ensure uploads directory exists - FIXED: Correct path
+    const uploadDir = path.join(__dirname, '../uploads/assigned-salesman');
+    console.log(`Upload directory path: ${uploadDir}`);
+    
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+      console.log(`✅ Created directory: ${uploadDir}`);
+    }
+
+    // Generate unique filename based on type
+    const timestamp = Date.now();
+    let filename;
+    if (type === 'capture') {
+      filename = `capture_${assignedNumber}_${timestamp}.${imageType}`;
+    } else {
+      filename = `assigned_${assignedNumber}_item_${itemIndex}_${timestamp}.${imageType}`;
+    }
+    const filePath = path.join(uploadDir, filename);
+    console.log(`📁 Saving image to: ${filePath}`);
+
+    // Write file
+    fs.writeFileSync(filePath, buffer);
+    console.log(`✅ Image saved: ${filePath}`);
+
+    // Return relative URL for database (with leading slash)
+    return `/uploads/assigned-salesman/${filename}`;
+  } catch (error) {
+    console.error('❌ Error saving image:', error.message);
+    console.error('❌ Stack trace:', error.stack);
+    return null;
+  }
+};
+
+/**
+ * Generate a unique assigned number if not provided.
+ */
+const generateAssignedNumber = () => {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+  return `ASN${year}${month}${day}${random}`;
+};
 
 exports.saveAssignedSalesman = (req, res) => {
   try {
@@ -11,7 +83,8 @@ exports.saveAssignedSalesman = (req, res) => {
       remarks,
       created_by,
       from_user_id,
-      to_user_id
+      to_user_id,
+      capture_image  // Capture image from Customer Details
     } = req.body;
 
     if (!transfer_data || !Array.isArray(transfer_data) || transfer_data.length === 0) {
@@ -26,19 +99,51 @@ exports.saveAssignedSalesman = (req, res) => {
       return res.status(400).json({ message: "To salesman is required" });
     }
 
+    // Determine assigned number
+    const assigned_number = reference_number || generateAssignedNumber();
+    console.log(`📦 Processing assignment: ${assigned_number}`);
+
+    // --- Process capture image (single image for the whole assignment) ---
+    let savedCaptureImagePath = null;
+    if (capture_image) {
+      console.log(`📷 Saving capture image for assignment ${assigned_number}...`);
+      console.log(`📷 Capture image type: ${typeof capture_image}, length: ${capture_image ? capture_image.length : 0}`);
+      savedCaptureImagePath = saveImageFile(capture_image, assigned_number, 'capture');
+      console.log(`📷 Capture image saved at: ${savedCaptureImagePath}`);
+    } else {
+      console.log(`📷 No capture image provided`);
+    }
+
+    // --- Process images for each item: convert base64 to file paths ---
+    const processedTransferData = transfer_data.map((item, index) => {
+      const processedItem = { ...item };
+
+      // If item has its own image
+      if (item.image) {
+        console.log(`🖼️ Item ${index} has image, saving...`);
+        const savedPath = saveImageFile(item.image, assigned_number, 'item', index);
+        processedItem.image = savedPath;
+      } else {
+        console.log(`🖼️ Item ${index} has no image`);
+      }
+
+      return processedItem;
+    });
+
     // Extract product codes from transfer_data for user_id update
-    const productCodes = transfer_data.map(item => item.PCode_BarCode).filter(code => code);
+    const productCodes = processedTransferData.map(item => item.PCode_BarCode).filter(code => code);
 
     assignedSalesmanModel.insert(
-      transfer_data,
+      processedTransferData,
       from_stock_point_id,
       to_salesman_id,
       transfer_date,
-      reference_number,
+      assigned_number,
       remarks,
       created_by,
       from_user_id,
       to_user_id,
+      savedCaptureImagePath,  // Pass capture image path
       (err, result) => {
         if (err) {
           console.error("Database error:", err);
@@ -46,12 +151,10 @@ exports.saveAssignedSalesman = (req, res) => {
         }
         
         // After successful transfer, update user_id in opening_tags_entry
-        // Stock_Point remains unchanged
         if (productCodes.length > 0 && to_salesman_id) {
           assignedSalesmanModel.updateStockPointForSalesman(productCodes, to_salesman_id, (updateErr, updateResult) => {
             if (updateErr) {
               console.error("Error updating user_id for salesman:", updateErr);
-              // Don't fail the whole transaction, just log the error
             }
             console.log(`Updated user_id for ${updateResult?.updatedCount || 0} products (Stock_Point unchanged)`);
             
@@ -59,6 +162,7 @@ exports.saveAssignedSalesman = (req, res) => {
               message: "Assigned to salesman completed successfully", 
               transfer_id: result.transfer_id,
               transfer_number: result.transfer_number,
+              capture_image: savedCaptureImagePath,
               items_updated: updateResult?.updatedCount || 0
             });
           });
@@ -66,13 +170,15 @@ exports.saveAssignedSalesman = (req, res) => {
           res.json({ 
             message: "Assigned to salesman completed successfully", 
             transfer_id: result.transfer_id,
-            transfer_number: result.transfer_number
+            transfer_number: result.transfer_number,
+            capture_image: savedCaptureImagePath
           });
         }
       }
     );
   } catch (error) {
     console.error("Error processing request:", error.message);
+    console.error("Stack trace:", error.stack);
     res.status(400).json({ message: "Invalid data format", error: error.message });
   }
 };

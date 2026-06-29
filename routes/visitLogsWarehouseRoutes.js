@@ -90,15 +90,18 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST - Create new warehouse visit schedule with multiple barcodes
+// POST - Create new warehouse visit schedule with multiple barcodes
 router.post('/', async (req, res) => {
   try {
-    const { customer_id, warehouse_id, barcodes, scheduled_date } = req.body;
+    const { customer_id, warehouse_id, barcodes, scheduled_date, salesman_id, salesman_name } = req.body;
     
     console.log('📝 Received data:', { 
       customer_id, 
       warehouse_id, 
       barcodes, 
       scheduled_date,
+      salesman_id,
+      salesman_name,
       barcode_count: barcodes ? barcodes.length : 0
     });
     
@@ -114,6 +117,7 @@ router.post('/', async (req, res) => {
     // Convert IDs to integers
     const customerIdInt = parseInt(customer_id);
     const warehouseIdInt = parseInt(warehouse_id);
+    const salesmanIdInt = salesman_id ? parseInt(salesman_id) : null;
     
     if (isNaN(customerIdInt) || isNaN(warehouseIdInt)) {
       console.log('❌ Invalid ID format:', { customerIdInt, warehouseIdInt });
@@ -130,8 +134,6 @@ router.post('/', async (req, res) => {
       [customerIdInt]
     );
     
-    console.log(`📊 Customer query result:`, customer);
-    
     if (customer.length === 0) {
       console.log(`❌ Customer with account_id ${customerIdInt} not found`);
       return res.status(400).json({ 
@@ -140,7 +142,6 @@ router.post('/', async (req, res) => {
       });
     }
     
-    // Check if account is a customer
     const accountGroup = customer[0].account_group;
     const isCustomer = accountGroup && (accountGroup.toUpperCase() === 'CUSTOMERS');
     
@@ -152,7 +153,6 @@ router.post('/', async (req, res) => {
       });
     }
     
-    // Get the actual customer_id (like "CUST-001") or use account_id as fallback
     const actualCustomerId = customer[0].customer_id || customer[0].account_id;
     console.log(`✅ Customer validated: ${customer[0].account_name} (Account ID: ${customer[0].account_id}, Customer ID: ${actualCustomerId})`);
     
@@ -162,8 +162,6 @@ router.post('/', async (req, res) => {
       'SELECT stock_point_id, stock_point_name, status FROM stock_points WHERE stock_point_id = ?', 
       [warehouseIdInt]
     );
-    
-    console.log(`📊 Warehouse query result:`, warehouse);
     
     if (warehouse.length === 0) {
       console.log(`❌ Warehouse with ID ${warehouseIdInt} not found`);
@@ -183,7 +181,27 @@ router.post('/', async (req, res) => {
     
     console.log(`✅ Warehouse validated: ${warehouse[0].stock_point_name}`);
     
-    // Step 3: Validate each barcode exists in stock transfers for this warehouse
+    // Step 3: Validate salesman if provided
+    let finalSalesmanName = salesman_name || null;
+    if (salesmanIdInt) {
+      console.log(`🔍 Checking salesman with account_id: ${salesmanIdInt}`);
+      const salesman = await queryAsync(
+        'SELECT account_id, account_name FROM account_details WHERE account_id = ? AND account_group = ?',
+        [salesmanIdInt, 'SALESMAN']
+      );
+      
+      if (salesman.length === 0) {
+        console.log(`❌ Salesman with account_id ${salesmanIdInt} not found or not a salesman`);
+        return res.status(400).json({
+          success: false,
+          message: `Invalid salesman selected. Account ID ${salesmanIdInt} is not a salesman.`
+        });
+      }
+      finalSalesmanName = salesman_name || salesman[0].account_name;
+      console.log(`✅ Salesman validated: ${finalSalesmanName}`);
+    }
+    
+    // Step 4: Validate each barcode exists in stock transfers for this warehouse
     const validBarcodes = [];
     const invalidBarcodes = [];
     const barcodeDetails = [];
@@ -232,7 +250,7 @@ router.post('/', async (req, res) => {
       });
     }
     
-    // Step 4: Check for duplicate schedules for each barcode
+    // Step 5: Check for duplicate schedules for each barcode
     const existingSchedules = [];
     for (const barcode of validBarcodes) {
       const existing = await queryAsync(
@@ -257,20 +275,19 @@ router.post('/', async (req, res) => {
     
     console.log('✅ No duplicates found');
     
-    // Step 5: Insert schedules for each barcode
+    // Step 6: Insert schedules for each barcode with salesman info
     const insertedIds = [];
     for (const barcode of validBarcodes) {
       console.log(`📝 Inserting schedule for barcode: ${barcode}...`);
       
-      // Store both the account_id (as customer_account_id) and the actual customer_id (as customer_id)
       const result = await queryAsync(
         `INSERT INTO visit_logs_warehouse_schedule 
-         (customer_account_id, customer_id, warehouse_id, barcode, scheduled_date) 
-         VALUES (?, ?, ?, ?, ?)`,
-        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date]
+         (customer_account_id, customer_id, warehouse_id, barcode, scheduled_date, salesman_id, salesman_name) 
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date, salesmanIdInt, finalSalesmanName]
       );
       insertedIds.push(result.insertId);
-      console.log(`✅ Schedule inserted with ID: ${result.insertId} (customer_id: ${actualCustomerId})`);
+      console.log(`✅ Schedule inserted with ID: ${result.insertId} (customer_id: ${actualCustomerId}, salesman: ${finalSalesmanName || 'Not assigned'})`);
     }
     
     res.status(201).json({ 
@@ -289,12 +306,13 @@ router.post('/', async (req, res) => {
 });
 
 // PUT - Update warehouse visit schedule
+// PUT - Update warehouse visit schedule
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { customer_id, warehouse_id, barcodes, scheduled_date, status } = req.body;
+    const { customer_id, warehouse_id, barcodes, scheduled_date, status, salesman_id, salesman_name } = req.body;
     
-    console.log(`📝 Updating schedule ${id}:`, { customer_id, warehouse_id, barcodes, scheduled_date, status });
+    console.log(`📝 Updating schedule ${id}:`, { customer_id, warehouse_id, barcodes, scheduled_date, status, salesman_id, salesman_name });
     
     // Validate required fields
     if (!customer_id || !warehouse_id || !barcodes || !barcodes.length || !scheduled_date) {
@@ -307,6 +325,7 @@ router.put('/:id', async (req, res) => {
     // Convert IDs to integers
     const customerIdInt = parseInt(customer_id);
     const warehouseIdInt = parseInt(warehouse_id);
+    const salesmanIdInt = salesman_id ? parseInt(salesman_id) : null;
     
     if (isNaN(customerIdInt) || isNaN(warehouseIdInt)) {
       return res.status(400).json({ 
@@ -344,7 +363,6 @@ router.put('/:id', async (req, res) => {
       });
     }
     
-    // Check if account is a customer
     const accountGroup = customer[0].account_group;
     const isCustomer = accountGroup && (accountGroup.toUpperCase() === 'CUSTOMERS');
     
@@ -355,7 +373,6 @@ router.put('/:id', async (req, res) => {
       });
     }
     
-    // Get the actual customer_id (like "CUST-001") or use account_id as fallback
     const actualCustomerId = customer[0].customer_id || customer[0].account_id;
     
     // Validate warehouse exists
@@ -371,14 +388,22 @@ router.put('/:id', async (req, res) => {
       });
     }
     
-    // Get old data for notification
-    const oldCustomerId = existing[0].customer_account_id;
-    const oldWarehouseId = existing[0].warehouse_id;
-    const oldBarcode = existing[0].barcode;
-    
-    // For multiple barcodes, we need to handle differently
-    // Since the table has one barcode per row, we'll delete all schedules for this ID
-    // and create new ones for each barcode
+    // Validate salesman if provided
+    let finalSalesmanName = salesman_name || null;
+    if (salesmanIdInt) {
+      const salesman = await queryAsync(
+        'SELECT account_id, account_name FROM account_details WHERE account_id = ? AND account_group = ?',
+        [salesmanIdInt, 'SALESMAN']
+      );
+      
+      if (salesman.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid salesman selected. Account ID ${salesmanIdInt} is not a salesman.`
+        });
+      }
+      finalSalesmanName = salesman_name || salesman[0].account_name;
+    }
     
     // Delete existing schedule
     await queryAsync(
@@ -386,14 +411,14 @@ router.put('/:id', async (req, res) => {
       [id]
     );
     
-    // Insert new schedules for each barcode
+    // Insert new schedules for each barcode with salesman info
     const insertedIds = [];
     for (const barcode of barcodes) {
       const result = await queryAsync(
         `INSERT INTO visit_logs_warehouse_schedule 
-         (customer_account_id, customer_id, warehouse_id, barcode, scheduled_date, status) 
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date, status || 'scheduled']
+         (customer_account_id, customer_id, warehouse_id, barcode, scheduled_date, status, salesman_id, salesman_name) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date, status || 'scheduled', salesmanIdInt, finalSalesmanName]
       );
       insertedIds.push(result.insertId);
     }

@@ -88,7 +88,7 @@ exports.saveReturnToMainStock = (req, res) => {
             from_user_id,
             to_user_id,
             assigned_ids = [],
-            capture_image  // <-- Capture image from Customer Details
+            capture_image
         } = req.body;
 
         if (!return_data || !Array.isArray(return_data) || return_data.length === 0) {
@@ -107,7 +107,6 @@ exports.saveReturnToMainStock = (req, res) => {
         let savedCaptureImagePath = null;
         if (capture_image) {
             console.log(`📷 Saving capture image for return ${return_number}...`);
-            console.log(`📷 Capture image type: ${typeof capture_image}, length: ${capture_image ? capture_image.length : 0}`);
             savedCaptureImagePath = saveImageFile(capture_image, return_number, 'capture');
             console.log(`📷 Capture image saved at: ${savedCaptureImagePath}`);
         } else {
@@ -127,6 +126,11 @@ exports.saveReturnToMainStock = (req, res) => {
                 console.log(`🖼️ Item ${index} has no image`);
             }
 
+            // Ensure packet_barcode is preserved
+            if (item.packet_barcode) {
+                console.log(`📦 Item ${index} has packet barcode: ${item.packet_barcode}`);
+            }
+
             return processedItem;
         });
 
@@ -141,7 +145,7 @@ exports.saveReturnToMainStock = (req, res) => {
             created_by,
             from_user_id,
             to_user_id,
-            savedCaptureImagePath,  // <-- Pass capture image path
+            savedCaptureImagePath,
             (err, result) => {
                 if (err) {
                     console.error("Database error:", err);

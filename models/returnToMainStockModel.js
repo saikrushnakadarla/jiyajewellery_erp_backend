@@ -13,7 +13,7 @@ exports.insert = (
     created_by,
     from_user_id = null,
     to_user_id = null,
-    capture_image = null,  // <-- Capture image path
+    capture_image = null,
     callback
 ) => {
     if (typeof from_user_id === 'function') {
@@ -85,7 +85,7 @@ exports.insert = (
         totalNetWeight,
         'completed',
         remarks || null,
-        capture_image || null,  // <-- Store capture image path
+        capture_image || null,
         created_by || null
     ];
 
@@ -97,12 +97,14 @@ exports.insert = (
 
         const returnId = returnResult.insertId;
 
+        // UPDATED: Include packet_barcode in the INSERT
         const insertItemsSql = `
             INSERT INTO return_to_main_stock_items (
                 return_id,
                 assigned_item_id,
                 product_id,
                 PCode_BarCode,
+                packet_barcode,
                 product_name,
                 metal_type,
                 purity,
@@ -134,11 +136,15 @@ exports.insert = (
                 imagePath = '/' + imagePath;
             }
 
+            // Get packet_barcode from item
+            const packetBarcode = item.packet_barcode || null;
+
             return [
                 returnId,
                 item.item_id || null,
                 item.product_id || null,
                 item.PCode_BarCode || null,
+                packetBarcode,  // <-- NEW: packet_barcode field
                 item.product_name || null,
                 item.metal_type || null,
                 item.purity || null,
@@ -208,7 +214,7 @@ exports.getAll = (callback) => {
 };
 
 // =============================================
-// GET BY ID: Get return transfer by ID with capture_image
+// GET BY ID: Get return transfer by ID with packet_barcode
 // =============================================
 exports.getById = (return_id, callback) => {
     const mainSql = `
@@ -250,8 +256,33 @@ exports.getById = (return_id, callback) => {
             return callback(null, null);
         }
 
+        // UPDATED: Include packet_barcode in SELECT
         const itemsSql = `
-            SELECT * FROM return_to_main_stock_items
+            SELECT 
+                item_id,
+                return_id,
+                assigned_item_id,
+                product_id,
+                PCode_BarCode,
+                packet_barcode,
+                product_name,
+                metal_type,
+                purity,
+                category,
+                sub_category,
+                design_name,
+                qty,
+                gross_weight,
+                stone_weight,
+                net_weight,
+                rate,
+                making_charges,
+                stone_price,
+                total_price,
+                image,
+                remarks,
+                created_at
+            FROM return_to_main_stock_items
             WHERE return_id = ?
             ORDER BY item_id ASC
         `;

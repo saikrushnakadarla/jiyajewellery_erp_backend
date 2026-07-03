@@ -501,9 +501,15 @@ exports.deleteAssignedRecords = (assignedIds, callback) => {
 };
 
 // Get products assigned to a salesman (from assigned_salesman tables)
-// Get products assigned to a salesman (from assigned_salesman tables)
-exports.getProductsBySalesman = (salesman_id, callback) => {
-  const sql = `
+
+exports.getProductsBySalesman = (salesman_id, from_stock_point_id, callback) => {
+  // Support old signature (salesman_id, callback) if called elsewhere
+  if (typeof from_stock_point_id === 'function') {
+    callback = from_stock_point_id;
+    from_stock_point_id = null;
+  }
+
+  let sql = `
     SELECT 
       asi.item_id,
       asi.assigned_id,
@@ -525,15 +531,25 @@ exports.getProductsBySalesman = (salesman_id, callback) => {
       asi.total_price,
       asi.image,
       ast.transfer_date,
-      ast.status as transfer_status
+      ast.status as transfer_status,
+      ast.from_stock_point_id
     FROM assigned_salesman_items asi
     INNER JOIN assigned_salesman_transfers ast ON asi.assigned_id = ast.assigned_id
     WHERE ast.to_salesman_id = ? 
       AND ast.status = 'completed'
-    ORDER BY ast.transfer_date DESC, asi.item_id ASC
   `;
-  
-  db.query(sql, [salesman_id], (err, results) => {
+
+  const params = [salesman_id];
+
+  // ✅ Only return products assigned FROM the selected Active Stock Point
+  if (from_stock_point_id) {
+    sql += ` AND ast.from_stock_point_id = ? `;
+    params.push(from_stock_point_id);
+  }
+
+  sql += ` ORDER BY ast.transfer_date DESC, asi.item_id ASC`;
+
+  db.query(sql, params, (err, results) => {
     if (err) {
       console.error("Error fetching products by salesman:", err);
       return callback(err);

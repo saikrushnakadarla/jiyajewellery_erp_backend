@@ -325,13 +325,13 @@ exports.updateStatus = (req, res) => {
 };
 
 exports.getAssignedProductsBySalesman = (req, res) => {
-  const { salesman_id } = req.query;
-  
+  const { salesman_id, from_stock_point_id } = req.query;
+
   if (!salesman_id) {
     return res.status(400).json({ message: "Salesman ID is required" });
   }
-  
-  receivedSalesmanModel.getProductsBySalesman(salesman_id, (err, results) => {
+
+  receivedSalesmanModel.getProductsBySalesman(salesman_id, from_stock_point_id, (err, results) => {
     if (err) {
       console.error("Error fetching assigned products:", err);
       return res.status(500).json({ message: "Error fetching assigned products" });

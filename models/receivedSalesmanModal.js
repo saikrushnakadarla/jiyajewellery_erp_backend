@@ -10,7 +10,11 @@ exports.insert = (
   created_by,
   from_user_id = null,
   to_user_id = null,
-  capture_image = null,  // <-- Capture image path
+  capture_image = null,
+  stock_outward_barcode = null,
+  stock_outward_gross_wt = null,
+  stock_outward_type = null,
+  stock_outward_packet_barcode = null,
   callback
 ) => {
   // Handle optional parameters
@@ -19,15 +23,45 @@ exports.insert = (
     from_user_id = null;
     to_user_id = null;
     capture_image = null;
+    stock_outward_barcode = null;
+    stock_outward_gross_wt = null;
+    stock_outward_type = null;
+    stock_outward_packet_barcode = null;
   }
   if (typeof to_user_id === 'function' && callback) {
     callback = to_user_id;
     to_user_id = null;
     capture_image = null;
+    stock_outward_barcode = null;
+    stock_outward_gross_wt = null;
+    stock_outward_type = null;
+    stock_outward_packet_barcode = null;
   }
   if (typeof capture_image === 'function' && callback) {
     callback = capture_image;
     capture_image = null;
+    stock_outward_barcode = null;
+    stock_outward_gross_wt = null;
+    stock_outward_type = null;
+    stock_outward_packet_barcode = null;
+  }
+  if (typeof stock_outward_barcode === 'function' && callback) {
+    callback = stock_outward_barcode;
+    stock_outward_barcode = null;
+    stock_outward_gross_wt = null;
+    stock_outward_type = null;
+    stock_outward_packet_barcode = null;
+  }
+  if (typeof stock_outward_gross_wt === 'function' && callback) {
+    callback = stock_outward_gross_wt;
+    stock_outward_gross_wt = null;
+    stock_outward_type = null;
+    stock_outward_packet_barcode = null;
+  }
+  if (typeof stock_outward_type === 'function' && callback) {
+    callback = stock_outward_type;
+    stock_outward_type = null;
+    stock_outward_packet_barcode = null;
   }
 
   if (!Array.isArray(transfer_data) || transfer_data.length === 0) {
@@ -48,7 +82,7 @@ exports.insert = (
     totalNetWeight += parseFloat(item.net_weight) || 0;
   });
 
-  // Insert main transfer record with capture_image column
+  // Insert main transfer record with capture_image and StockOutWard columns
   const insertTransferSql = `
     INSERT INTO received_salesman_transfers (
       received_number,
@@ -64,10 +98,14 @@ exports.insert = (
       status,
       remarks,
       capture_image,
+      stock_outward_barcode,
+      stock_outward_gross_wt,
+      stock_outward_type,
+      stock_outward_packet_barcode,
       created_by,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
   `;
 
   const transferParams = [
@@ -83,7 +121,11 @@ exports.insert = (
     totalNetWeight,
     'completed',
     remarks || null,
-    capture_image || null,  // <-- Store capture image path
+    capture_image || null,
+    stock_outward_barcode || null,
+    stock_outward_gross_wt || null,
+    stock_outward_type || null,
+    stock_outward_packet_barcode || null,
     created_by || null
   ];
 
@@ -165,12 +207,16 @@ exports.insert = (
       
       console.log(`✅ Received ${received_number} saved with ${itemValues.length} items.`);
       console.log(`📷 Capture image: ${capture_image || 'None'}`);
+      console.log(`📦 StockOutWard Barcode: ${stock_outward_barcode || 'None'}`);
+      console.log(`📦 StockOutWard Gross WT: ${stock_outward_gross_wt || 'None'}`);
+      console.log(`📦 StockOutWard Type: ${stock_outward_type || 'None'}`);
+      console.log(`📦 StockOutWard Packet Barcode: ${stock_outward_packet_barcode || 'None'}`);
       callback(null, { transfer_id: receivedId, transfer_number: received_number });
     });
   });
 };
 
-// GET ALL with capture_image
+// GET ALL with capture_image and StockOutWard fields
 exports.getAll = (callback) => {
   const sql = `
     SELECT 
@@ -188,6 +234,10 @@ exports.getAll = (callback) => {
       rst.status,
       rst.remarks,
       rst.capture_image,
+      rst.stock_outward_barcode,
+      rst.stock_outward_gross_wt,
+      rst.stock_outward_type,
+      rst.stock_outward_packet_barcode,
       rst.created_by,
       rst.created_at,
       rst.updated_at,
@@ -202,7 +252,7 @@ exports.getAll = (callback) => {
   db.query(sql, callback);
 };
 
-// GET BY ID with capture_image
+// GET BY ID with capture_image and StockOutWard fields
 exports.getById = (received_id, callback) => {
   const mainSql = `
     SELECT 
@@ -220,6 +270,10 @@ exports.getById = (received_id, callback) => {
       rst.status,
       rst.remarks,
       rst.capture_image,
+      rst.stock_outward_barcode,
+      rst.stock_outward_gross_wt,
+      rst.stock_outward_type,
+      rst.stock_outward_packet_barcode,
       rst.created_by,
       rst.created_at,
       rst.updated_at,
@@ -501,7 +555,6 @@ exports.deleteAssignedRecords = (assignedIds, callback) => {
 };
 
 // Get products assigned to a salesman (from assigned_salesman tables)
-
 exports.getProductsBySalesman = (salesman_id, from_stock_point_id, callback) => {
   // Support old signature (salesman_id, callback) if called elsewhere
   if (typeof from_stock_point_id === 'function') {

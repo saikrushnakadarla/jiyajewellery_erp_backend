@@ -72,7 +72,7 @@ const generateReceivedNumber = () => {
   return `RCN${year}${month}${day}${random}`;
 };
 
-// Save Received Salesman with Capture Image
+// Save Received Salesman with Capture Image and StockOutWard fields
 exports.saveReceivedSalesman = (req, res) => {
   try {
     const { 
@@ -85,7 +85,12 @@ exports.saveReceivedSalesman = (req, res) => {
       created_by,
       from_user_id,
       to_user_id,
-      capture_image  // <-- Capture image from Customer Details
+      capture_image,
+      // New StockOutWard fields
+      stock_outward_barcode,
+      stock_outward_gross_wt,
+      stock_outward_type,
+      stock_outward_packet_barcode
     } = req.body;
 
     if (!transfer_data || !Array.isArray(transfer_data) || transfer_data.length === 0) {
@@ -103,6 +108,10 @@ exports.saveReceivedSalesman = (req, res) => {
     // Determine received number
     const received_number = reference_number || generateReceivedNumber();
     console.log(`📦 Processing received: ${received_number}`);
+    console.log(`📦 StockOutWard Barcode: ${stock_outward_barcode}`);
+    console.log(`📦 StockOutWard Gross WT: ${stock_outward_gross_wt}`);
+    console.log(`📦 StockOutWard Type: ${stock_outward_type}`);
+    console.log(`📦 StockOutWard Packet Barcode: ${stock_outward_packet_barcode}`);
 
     // --- Process capture image (single image for the whole transfer) ---
     let savedCaptureImagePath = null;
@@ -135,7 +144,7 @@ exports.saveReceivedSalesman = (req, res) => {
     const productCodes = processedTransferData.map(item => item.PCode_BarCode).filter(code => code);
     const assignedIds = processedTransferData.map(item => item.assigned_id).filter(id => id);
 
-    // Insert transfer records with capture image
+    // Insert transfer records with capture image and StockOutWard fields
     receivedSalesmanModel.insert(
       processedTransferData,
       from_salesman_id,
@@ -146,7 +155,11 @@ exports.saveReceivedSalesman = (req, res) => {
       created_by,
       from_user_id,
       to_user_id,
-      savedCaptureImagePath,  // <-- Pass capture image path
+      savedCaptureImagePath,
+      stock_outward_barcode,
+      stock_outward_gross_wt,
+      stock_outward_type,
+      stock_outward_packet_barcode,
       (err, result) => {
         if (err) {
           console.error("Database error:", err);
@@ -180,6 +193,10 @@ exports.saveReceivedSalesman = (req, res) => {
                     transfer_id: result.transfer_id,
                     transfer_number: result.transfer_number,
                     capture_image: savedCaptureImagePath,
+                    stock_outward_barcode: stock_outward_barcode,
+                    stock_outward_gross_wt: stock_outward_gross_wt,
+                    stock_outward_type: stock_outward_type,
+                    stock_outward_packet_barcode: stock_outward_packet_barcode,
                     items_updated: updateResult?.updatedCount || 0,
                     records_deleted: deleteResult?.deletedCount || 0
                   });
@@ -190,6 +207,10 @@ exports.saveReceivedSalesman = (req, res) => {
                   transfer_id: result.transfer_id,
                   transfer_number: result.transfer_number,
                   capture_image: savedCaptureImagePath,
+                  stock_outward_barcode: stock_outward_barcode,
+                  stock_outward_gross_wt: stock_outward_gross_wt,
+                  stock_outward_type: stock_outward_type,
+                  stock_outward_packet_barcode: stock_outward_packet_barcode,
                   items_updated: updateResult?.updatedCount || 0
                 });
               }
@@ -200,7 +221,11 @@ exports.saveReceivedSalesman = (req, res) => {
             message: "Received from salesman completed successfully", 
             transfer_id: result.transfer_id,
             transfer_number: result.transfer_number,
-            capture_image: savedCaptureImagePath
+            capture_image: savedCaptureImagePath,
+            stock_outward_barcode: stock_outward_barcode,
+            stock_outward_gross_wt: stock_outward_gross_wt,
+            stock_outward_type: stock_outward_type,
+            stock_outward_packet_barcode: stock_outward_packet_barcode
           });
         }
       }

@@ -1,6 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const nodemailer = require('nodemailer');
+require('dotenv').config();
+
+// Configure nodemailer
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: "tharunkumarreddy1212@gmail.com",
+    pass: "cglm sfpj sphy rtqh"
+  }
+});
 
 // Helper function to promisify db.query
 const queryAsync = (sql, params) => {
@@ -15,12 +26,244 @@ const queryAsync = (sql, params) => {
   });
 };
 
-// Helper function to create notification for customer when warehouse visit is scheduled
-async function createWarehouseScheduleNotification(customerAccountId, warehouseId, barcode, scheduledDate, salesmanId, salesmanName) {
+// Helper function to get customer email from users table with fallback
+async function getCustomerEmail(customerAccountId) {
   try {
-    // Get customer details
+    const accountResult = await queryAsync(
+      'SELECT user_id, email FROM account_details WHERE account_id = ?',
+      [customerAccountId]
+    );
+
+    if (accountResult.length === 0) {
+      console.log(`⚠️ No account_details row found for customer account_id ${customerAccountId}`);
+      return null;
+    }
+
+    const userId = accountResult[0].user_id;
+
+    if (userId) {
+      const userResult = await queryAsync(
+        'SELECT email_id FROM users WHERE id = ?',
+        [userId]
+      );
+      if (userResult.length > 0 && userResult[0].email_id) {
+        console.log(`✅ Customer email from users table (id ${userId}): ${userResult[0].email_id}`);
+        return userResult[0].email_id;
+      }
+      console.log(`⚠️ user_id ${userId} set on account_details but no email_id found in users table`);
+    } else {
+      console.log(`⚠️ account_details.user_id is NULL for account ${customerAccountId} — cannot link to users table`);
+    }
+
+    // Fallback: use account_details.email if the users-table link is missing
+    if (accountResult[0].email) {
+      console.log(`ℹ️ Falling back to account_details.email for customer ${customerAccountId}: ${accountResult[0].email}`);
+      return accountResult[0].email;
+    }
+
+    console.log(`⚠️ No email found anywhere for customer account ${customerAccountId}`);
+    return null;
+  } catch (error) {
+    console.error('❌ Error getting customer email:', error);
+    return null;
+  }
+}
+
+// Helper function to get salesman email from account_details table with case-insensitive check
+async function getSalesmanEmail(salesmanId) {
+  try {
+    const result = await queryAsync(
+      `SELECT email, account_group FROM account_details 
+       WHERE account_id = ? AND UPPER(TRIM(account_group)) = 'SALESMAN'`,
+      [salesmanId]
+    );
+
+    if (result.length === 0) {
+      console.log(`⚠️ No account_details row matched account_id ${salesmanId} with account_group = SALESMAN (check case/whitespace/account_id value)`);
+      return null;
+    }
+
+    if (!result[0].email) {
+      console.log(`⚠️ Salesman account_id ${salesmanId} found but 'email' column is empty in account_details`);
+      return null;
+    }
+
+    console.log(`✅ Salesman email from account_details (account_id ${salesmanId}): ${result[0].email}`);
+    return result[0].email;
+  } catch (error) {
+    console.error('❌ Error getting salesman email:', error);
+    return null;
+  }
+}
+
+// Helper function to send email
+async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, data) {
+  try {
+    const { customerName, warehouseName, barcode, productName, scheduledDate, scheduledTime, salesmanName, customerId } = data;
+    
+    let subject, html;
+    
+    if (emailType === 'customer') {
+      subject = '📦 Warehouse Visit Scheduled - Jiyaa Jewels';
+      html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background: #ffffff;">
+          <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #f0f0f0;">
+            <h2 style="color: #4F46E5; margin: 0;">Jiyaa Jewels</h2>
+            <p style="color: #666; margin: 5px 0 0 0;">Warehouse Visit Schedule</p>
+          </div>
+          
+          <div style="padding: 20px 0;">
+            <p style="font-size: 16px; color: #333;">Dear <strong>${recipientName || 'Customer'}</strong>,</p>
+            
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              A warehouse visit has been scheduled for you. Please find the details below:
+            </p>
+            
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555; width: 40%;">Customer</td>
+                  <td style="padding: 8px 10px; color: #333;">${customerName || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Customer ID</td>
+                  <td style="padding: 8px 10px; color: #333;">${customerId || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Warehouse</td>
+                  <td style="padding: 8px 10px; color: #333;">${warehouseName || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Product</td>
+                  <td style="padding: 8px 10px; color: #333;">${productName || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Barcode</td>
+                  <td style="padding: 8px 10px; color: #333; font-family: monospace;">${barcode || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Date</td>
+                  <td style="padding: 8px 10px; color: #333;">${scheduledDate || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Time</td>
+                  <td style="padding: 8px 10px; color: #333;">${scheduledTime || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Salesperson</td>
+                  <td style="padding: 8px 10px; color: #333;">${salesmanName || 'Not assigned yet'}</td>
+                </tr>
+              </table>
+            </div>
+            
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              Please be available at the scheduled time. If you need to reschedule or have any questions, 
+              please contact our support team.
+            </p>
+            
+            <div style="background: #f0f7ff; padding: 12px; border-radius: 6px; border-left: 4px solid #4F46E5; margin: 15px 0;">
+              <p style="font-size: 13px; color: #555; margin: 0;">
+                <strong>📌 Note:</strong> Please bring this email with you for verification purposes.
+              </p>
+            </div>
+          </div>
+          
+          <div style="padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center; color: #888; font-size: 13px;">
+            <p style="margin: 0;">Thank you for choosing Jiyaa Jewels</p>
+            <p style="margin: 5px 0 0 0; font-size: 12px;">This is an automated notification. Please do not reply to this email.</p>
+          </div>
+        </div>
+      `;
+    } else if (emailType === 'salesman') {
+      subject = '📦 New Warehouse Visit Assignment - Jiyaa Jewels';
+      html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background: #ffffff;">
+          <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #f0f0f0;">
+            <h2 style="color: #4F46E5; margin: 0;">Jiyaa Jewels</h2>
+            <p style="color: #666; margin: 5px 0 0 0;">New Visit Assignment</p>
+          </div>
+          
+          <div style="padding: 20px 0;">
+            <p style="font-size: 16px; color: #333;">Dear <strong>${recipientName || 'Salesperson'}</strong>,</p>
+            
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              You have been assigned a new warehouse visit. Please review the details below:
+            </p>
+            
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555; width: 40%;">Customer</td>
+                  <td style="padding: 8px 10px; color: #333;">${customerName || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Customer ID</td>
+                  <td style="padding: 8px 10px; color: #333;">${customerId || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Warehouse</td>
+                  <td style="padding: 8px 10px; color: #333;">${warehouseName || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Product</td>
+                  <td style="padding: 8px 10px; color: #333;">${productName || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Barcode</td>
+                  <td style="padding: 8px 10px; color: #333; font-family: monospace;">${barcode || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Date</td>
+                  <td style="padding: 8px 10px; color: #333;">${scheduledDate || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Time</td>
+                  <td style="padding: 8px 10px; color: #333;">${scheduledTime || 'N/A'}</td>
+                </tr>
+              </table>
+            </div>
+            
+            <div style="background: #fff3e0; padding: 12px; border-radius: 6px; border-left: 4px solid #FF9800; margin: 15px 0;">
+              <p style="font-size: 13px; color: #555; margin: 0;">
+                <strong>⚠️ Action Required:</strong> Please prepare for the visit and ensure you have all necessary materials.
+              </p>
+            </div>
+            
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              <strong>Customer Contact:</strong> Please reach out to the customer to confirm the visit.
+            </p>
+          </div>
+          
+          <div style="padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center; color: #888; font-size: 13px;">
+            <p style="margin: 0;">Thank you for your service</p>
+            <p style="margin: 5px 0 0 0; font-size: 12px;">This is an automated notification. Please do not reply to this email.</p>
+          </div>
+        </div>
+      `;
+    }
+    
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: recipientEmail,
+      subject: subject,
+      html: html
+    });
+    
+    console.log(`✅ Email sent to ${recipientEmail} (${emailType})`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Error sending email to ${recipientEmail}:`, error);
+    return false;
+  }
+}
+
+// Helper function to create notification and send email for customer
+// Helper function to create notification and send email for customer
+async function createWarehouseScheduleNotification(customerAccountId, warehouseId, barcode, scheduledDate, salesmanId, salesmanName, barcodeDetails) {
+  try {
+    // Get customer details from account_details
     const customer = await queryAsync(
-      'SELECT account_name, customer_id, email, mobile FROM account_details WHERE account_id = ?',
+      'SELECT account_name, customer_id, email, mobile, user_id FROM account_details WHERE account_id = ?',
       [customerAccountId]
     );
     
@@ -30,17 +273,10 @@ async function createWarehouseScheduleNotification(customerAccountId, warehouseI
       [warehouseId]
     );
     
-    // Get barcode product details
-    const barcodeDetails = await queryAsync(`
-      SELECT sti.product_name, sti.category, sti.design_name
-      FROM stock_transfer_items sti
-      WHERE sti.PCode_BarCode = ?
-      LIMIT 1
-    `, [barcode]);
-    
     const customerName = customer.length > 0 ? customer[0].account_name : 'Customer';
+    const customerId = customer.length > 0 ? customer[0].customer_id : 'N/A';
     const warehouseName = warehouse.length > 0 ? warehouse[0].stock_point_name : 'Warehouse';
-    const productName = barcodeDetails.length > 0 ? barcodeDetails[0].product_name : 'Product';
+    const productName = barcodeDetails && barcodeDetails.length > 0 ? barcodeDetails[0].product_name : 'Product';
     
     const scheduledDateTime = new Date(scheduledDate);
     const formattedDate = scheduledDateTime.toLocaleDateString('en-US', {
@@ -55,13 +291,37 @@ async function createWarehouseScheduleNotification(customerAccountId, warehouseI
       hour12: true
     });
     
+    // Get customer email from users table (with fallback)
+    const customerEmail = await getCustomerEmail(customerAccountId);
+    
+    // Send email to customer if email exists
+    if (customerEmail) {
+      await sendVisitScheduleEmail(
+        customerEmail,
+        customerName,
+        'customer',
+        {
+          customerName,
+          warehouseName,
+          barcode,
+          productName,
+          scheduledDate: formattedDate,
+          scheduledTime: formattedTime,
+          salesmanName: salesmanName || 'Not assigned yet',
+          customerId
+        }
+      );
+    } else {
+      console.log(`⚠️ No email found for customer ${customerAccountId} (Customer: ${customerName})`);
+    }
+    
+    // Create notification in database for customer
     const title = '📦 New Warehouse Visit Scheduled';
     const message = `A warehouse visit has been scheduled for you at ${warehouseName} on ${formattedDate} at ${formattedTime}. 
       Product: ${productName} (Barcode: ${barcode})
       ${salesmanName ? `Salesperson: ${salesmanName}` : 'No salesperson assigned yet.'}
       Please be available at the scheduled time.`;
     
-    // Insert notification for customer
     await queryAsync(
       `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
        VALUES (?, 'customer', ?, ?, 'warehouse_schedule', ?, NOW())`,
@@ -70,12 +330,36 @@ async function createWarehouseScheduleNotification(customerAccountId, warehouseI
     
     console.log(`✅ Warehouse schedule notification sent to customer ${customerAccountId}`);
     
-    // Also send notification to salesman if assigned
+    // Send notification and email to salesman if assigned
     if (salesmanId) {
+      // Get salesman email from account_details
+      const salesmanEmail = await getSalesmanEmail(salesmanId);
+      
+      // Send email to salesman if email exists
+      if (salesmanEmail) {
+        await sendVisitScheduleEmail(
+          salesmanEmail,
+          salesmanName || 'Salesperson',
+          'salesman',
+          {
+            customerName,
+            warehouseName,
+            barcode,
+            productName,
+            scheduledDate: formattedDate,
+            scheduledTime: formattedTime,
+            salesmanName: salesmanName || 'Salesperson',
+            customerId
+          }
+        );
+      } else {
+        console.log(`⚠️ No email found for salesman ${salesmanId}`);
+      }
+      
       const salesmanTitle = '📦 New Warehouse Visit Assignment';
       const salesmanMessage = `You have been assigned to visit ${customerName} at ${warehouseName} on ${formattedDate} at ${formattedTime}.
         Product: ${productName} (Barcode: ${barcode})
-        Customer: ${customerName} (${customer.length > 0 ? customer[0].customer_id : 'N/A'})`;
+        Customer: ${customerName} (${customerId})`;
       
       await queryAsync(
         `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
@@ -207,7 +491,7 @@ router.post('/', async (req, res) => {
     // Step 1: Validate customer exists in account_details
     console.log(`🔍 Checking customer with account_id: ${customerIdInt}`);
     const customer = await queryAsync(
-      'SELECT account_id, customer_id, account_name, account_group FROM account_details WHERE account_id = ?', 
+      'SELECT account_id, customer_id, account_name, account_group, user_id FROM account_details WHERE account_id = ?', 
       [customerIdInt]
     );
     
@@ -263,7 +547,7 @@ router.post('/', async (req, res) => {
     if (salesmanIdInt) {
       console.log(`🔍 Checking salesman with account_id: ${salesmanIdInt}`);
       const salesman = await queryAsync(
-        'SELECT account_id, account_name FROM account_details WHERE account_id = ? AND account_group = ?',
+        'SELECT account_id, account_name, email FROM account_details WHERE account_id = ? AND account_group = ?',
         [salesmanIdInt, 'SALESMAN']
       );
       
@@ -366,20 +650,22 @@ router.post('/', async (req, res) => {
       insertedIds.push(result.insertId);
       console.log(`✅ Schedule inserted with ID: ${result.insertId} (customer_id: ${actualCustomerId}, salesman: ${finalSalesmanName || 'Not assigned'})`);
       
-      // Send notification for each barcode
+      // Send notification and email for each barcode
+      const barcodeDetail = barcodeDetails.find(b => b.PCode_BarCode === barcode);
       await createWarehouseScheduleNotification(
         customerIdInt, 
         warehouseIdInt, 
         barcode, 
         scheduled_date, 
         salesmanIdInt, 
-        finalSalesmanName
+        finalSalesmanName,
+        barcodeDetail ? [barcodeDetail] : []
       );
     }
     
     res.status(201).json({ 
       success: true, 
-      message: `${validBarcodes.length} warehouse visits scheduled successfully with notifications sent`,
+      message: `${validBarcodes.length} warehouse visits scheduled successfully with notifications and emails sent`,
       scheduleIds: insertedIds
     });
     
@@ -392,12 +678,12 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Helper function for update notification
-async function createWarehouseScheduleUpdateNotification(customerAccountId, warehouseId, barcode, scheduledDate, salesmanId, salesmanName, oldSchedule) {
+// Helper function for update notification with email
+async function createWarehouseScheduleUpdateNotification(customerAccountId, warehouseId, barcode, scheduledDate, salesmanId, salesmanName, oldSchedule, barcodeDetails) {
   try {
     // Get customer details
     const customer = await queryAsync(
-      'SELECT account_name, customer_id FROM account_details WHERE account_id = ?',
+      'SELECT account_name, customer_id, user_id FROM account_details WHERE account_id = ?',
       [customerAccountId]
     );
     
@@ -408,7 +694,9 @@ async function createWarehouseScheduleUpdateNotification(customerAccountId, ware
     );
     
     const customerName = customer.length > 0 ? customer[0].account_name : 'Customer';
+    const customerId = customer.length > 0 ? customer[0].customer_id : 'N/A';
     const warehouseName = warehouse.length > 0 ? warehouse[0].stock_point_name : 'Warehouse';
+    const productName = barcodeDetails && barcodeDetails.length > 0 ? barcodeDetails[0].product_name : 'Product';
     
     const scheduledDateTime = new Date(scheduledDate);
     const formattedDate = scheduledDateTime.toLocaleDateString('en-US', {
@@ -423,12 +711,34 @@ async function createWarehouseScheduleUpdateNotification(customerAccountId, ware
       hour12: true
     });
     
+    // Get customer email from users table
+    const customerEmail = await getCustomerEmail(customerAccountId);
+    
+    // Send email to customer if email exists
+    if (customerEmail) {
+      await sendVisitScheduleEmail(
+        customerEmail,
+        customerName,
+        'customer',
+        {
+          customerName,
+          warehouseName,
+          barcode,
+          productName,
+          scheduledDate: formattedDate,
+          scheduledTime: formattedTime,
+          salesmanName: salesmanName || 'Not assigned yet',
+          customerId
+        }
+      );
+    }
+    
+    // Insert notification for customer
     const title = '📦 Warehouse Visit Updated';
     const message = `Your warehouse visit at ${warehouseName} has been updated to ${formattedDate} at ${formattedTime}.
       Barcode: ${barcode}
       ${salesmanName ? `Salesperson: ${salesmanName}` : 'No salesperson assigned.'}`;
     
-    // Insert notification for customer
     await queryAsync(
       `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
        VALUES (?, 'customer', ?, ?, 'warehouse_schedule', ?, NOW())`,
@@ -437,8 +747,30 @@ async function createWarehouseScheduleUpdateNotification(customerAccountId, ware
     
     console.log(`✅ Warehouse schedule update notification sent to customer ${customerAccountId}`);
     
-    // Send notification to salesman if assigned
+    // Send notification and email to salesman if assigned
     if (salesmanId) {
+      // Get salesman email from account_details
+      const salesmanEmail = await getSalesmanEmail(salesmanId);
+      
+      // Send email to salesman if email exists
+      if (salesmanEmail) {
+        await sendVisitScheduleEmail(
+          salesmanEmail,
+          salesmanName || 'Salesperson',
+          'salesman',
+          {
+            customerName,
+            warehouseName,
+            barcode,
+            productName,
+            scheduledDate: formattedDate,
+            scheduledTime: formattedTime,
+            salesmanName: salesmanName || 'Salesperson',
+            customerId
+          }
+        );
+      }
+      
       const salesmanTitle = '📦 Warehouse Visit Assignment Updated';
       const salesmanMessage = `Your warehouse visit assignment has been updated.
         Customer: ${customerName}
@@ -559,8 +891,13 @@ router.put('/:id', async (req, res) => {
       finalSalesmanName = salesman_name || salesman[0].account_name;
     }
     
-    // Get old barcodes for notification
-    const oldBarcode = oldSchedule.barcode;
+    // Get barcode details for the first barcode
+    const barcodeDetail = await queryAsync(`
+      SELECT sti.PCode_BarCode, sti.product_name
+      FROM stock_transfer_items sti
+      WHERE sti.PCode_BarCode = ?
+      LIMIT 1
+    `, [barcodes[0]]);
     
     // Delete existing schedule
     await queryAsync(
@@ -579,7 +916,7 @@ router.put('/:id', async (req, res) => {
       );
       insertedIds.push(result.insertId);
       
-      // Send update notification for each barcode
+      // Send update notification and email for each barcode
       await createWarehouseScheduleUpdateNotification(
         customerIdInt,
         warehouseIdInt,
@@ -587,13 +924,14 @@ router.put('/:id', async (req, res) => {
         scheduled_date,
         salesmanIdInt,
         finalSalesmanName,
-        oldSchedule
+        oldSchedule,
+        barcodeDetail
       );
     }
     
     console.log(`✅ Schedule ${id} updated successfully with ${insertedIds.length} new entries`);
     
-    res.json({ success: true, message: 'Warehouse schedule updated successfully with notifications sent', scheduleIds: insertedIds });
+    res.json({ success: true, message: 'Warehouse schedule updated successfully with notifications and emails sent', scheduleIds: insertedIds });
     
   } catch (error) {
     console.error('❌ Error updating warehouse schedule:', error);
@@ -604,14 +942,14 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Helper function for deletion notification
+// Helper function for deletion notification with email
 async function createWarehouseScheduleDeletionNotification(scheduleData) {
   try {
     const { customer_account_id, warehouse_id, barcode, scheduled_date, salesman_id, salesman_name } = scheduleData;
     
     // Get customer details
     const customer = await queryAsync(
-      'SELECT account_name FROM account_details WHERE account_id = ?',
+      'SELECT account_name, customer_id, user_id FROM account_details WHERE account_id = ?',
       [customer_account_id]
     );
     
@@ -622,6 +960,7 @@ async function createWarehouseScheduleDeletionNotification(scheduleData) {
     );
     
     const customerName = customer.length > 0 ? customer[0].account_name : 'Customer';
+    const customerId = customer.length > 0 ? customer[0].customer_id : 'N/A';
     const warehouseName = warehouse.length > 0 ? warehouse[0].stock_point_name : 'Warehouse';
     
     const scheduledDateTime = new Date(scheduled_date);
@@ -637,12 +976,62 @@ async function createWarehouseScheduleDeletionNotification(scheduleData) {
       hour12: true
     });
     
+    // Get customer email from users table
+    const customerEmail = await getCustomerEmail(customer_account_id);
+    
+    // Send email to customer if email exists
+    if (customerEmail) {
+      const subject = '❌ Warehouse Visit Cancelled - Jiyaa Jewels';
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background: #ffffff;">
+          <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #f0f0f0;">
+            <h2 style="color: #4F46E5; margin: 0;">Jiyaa Jewels</h2>
+            <p style="color: #666; margin: 5px 0 0 0;">Visit Cancellation</p>
+          </div>
+          
+          <div style="padding: 20px 0;">
+            <p style="font-size: 16px; color: #333;">Dear <strong>${customerName}</strong>,</p>
+            
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              We regret to inform you that your warehouse visit scheduled for <strong>${formattedDate} at ${formattedTime}</strong> 
+              at <strong>${warehouseName}</strong> has been cancelled.
+            </p>
+            
+            <div style="background: #fff3e0; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #FF9800;">
+              <p style="font-size: 14px; color: #555; margin: 0;">
+                <strong>Barcode:</strong> ${barcode}<br>
+                <strong>Reason:</strong> The visit has been cancelled by the administration.
+              </p>
+            </div>
+            
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              If you have any questions or would like to reschedule, please contact our support team.
+            </p>
+          </div>
+          
+          <div style="padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center; color: #888; font-size: 13px;">
+            <p style="margin: 0;">Thank you for choosing Jiyaa Jewels</p>
+            <p style="margin: 5px 0 0 0; font-size: 12px;">This is an automated notification. Please do not reply to this email.</p>
+          </div>
+        </div>
+      `;
+      
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: customerEmail,
+        subject: subject,
+        html: html
+      });
+      
+      console.log(`✅ Deletion email sent to customer ${customerEmail}`);
+    }
+    
+    // Insert notification for customer
     const title = '❌ Warehouse Visit Cancelled';
     const message = `Your warehouse visit at ${warehouseName} scheduled for ${formattedDate} at ${formattedTime} has been cancelled.
       Barcode: ${barcode}
       Please contact us for more information.`;
     
-    // Insert notification for customer
     await queryAsync(
       `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
        VALUES (?, 'customer', ?, ?, 'warehouse_schedule', ?, NOW())`,
@@ -651,8 +1040,54 @@ async function createWarehouseScheduleDeletionNotification(scheduleData) {
     
     console.log(`✅ Warehouse schedule deletion notification sent to customer ${customer_account_id}`);
     
-    // Send notification to salesman if assigned
+    // Send notification and email to salesman if assigned
     if (salesman_id) {
+      // Get salesman email from account_details
+      const salesmanEmail = await getSalesmanEmail(salesman_id);
+      
+      // Send email to salesman if email exists
+      if (salesmanEmail) {
+        const subject = '❌ Warehouse Visit Assignment Cancelled - Jiyaa Jewels';
+        const html = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background: #ffffff;">
+            <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #f0f0f0;">
+              <h2 style="color: #4F46E5; margin: 0;">Jiyaa Jewels</h2>
+              <p style="color: #666; margin: 5px 0 0 0;">Assignment Cancellation</p>
+            </div>
+            
+            <div style="padding: 20px 0;">
+              <p style="font-size: 16px; color: #333;">Dear <strong>${salesman_name || 'Salesperson'}</strong>,</p>
+              
+              <p style="font-size: 15px; color: #444; line-height: 1.6;">
+                Your warehouse visit assignment for customer <strong>${customerName}</strong> (${customerId}) 
+                at <strong>${warehouseName}</strong> scheduled for <strong>${formattedDate} at ${formattedTime}</strong> 
+                has been cancelled.
+              </p>
+              
+              <div style="background: #fff3e0; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #FF9800;">
+                <p style="font-size: 14px; color: #555; margin: 0;">
+                  <strong>Barcode:</strong> ${barcode}<br>
+                  <strong>Reason:</strong> The visit has been cancelled by the administration.
+                </p>
+              </div>
+            </div>
+            
+            <div style="padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center; color: #888; font-size: 13px;">
+              <p style="margin: 0;">Thank you for your service</p>
+            </div>
+          </div>
+        `;
+        
+        await transporter.sendMail({
+          from: process.env.EMAIL_USER,
+          to: salesmanEmail,
+          subject: subject,
+          html: html
+        });
+        
+        console.log(`✅ Deletion email sent to salesman ${salesmanEmail}`);
+      }
+      
       const salesmanTitle = '❌ Warehouse Visit Assignment Cancelled';
       const salesmanMessage = `Your warehouse visit assignment has been cancelled.
         Customer: ${customerName}
@@ -695,7 +1130,7 @@ router.delete('/:id', async (req, res) => {
     
     const scheduleData = schedule[0];
     
-    // Send deletion notifications
+    // Send deletion notifications with emails
     await createWarehouseScheduleDeletionNotification(scheduleData);
     
     const result = await queryAsync(
@@ -707,7 +1142,7 @@ router.delete('/:id', async (req, res) => {
       console.log(`✅ Schedule ${id} deleted successfully`);
     }
     
-    res.json({ success: true, message: 'Warehouse schedule deleted successfully with notifications sent' });
+    res.json({ success: true, message: 'Warehouse schedule deleted successfully with notifications and emails sent' });
     
   } catch (error) {
     console.error('❌ Error deleting warehouse schedule:', error);
@@ -789,14 +1224,14 @@ router.get('/customer/:customerId', async (req, res) => {
   }
 });
 
-// Helper function for status change notification
+// Helper function for status change notification with email
 async function createWarehouseScheduleStatusNotification(scheduleData, newStatus) {
   try {
     const { customer_account_id, warehouse_id, barcode, scheduled_date, salesman_id, salesman_name } = scheduleData;
     
     // Get customer details
     const customer = await queryAsync(
-      'SELECT account_name FROM account_details WHERE account_id = ?',
+      'SELECT account_name, customer_id, user_id FROM account_details WHERE account_id = ?',
       [customer_account_id]
     );
     
@@ -807,22 +1242,118 @@ async function createWarehouseScheduleStatusNotification(scheduleData, newStatus
     );
     
     const customerName = customer.length > 0 ? customer[0].account_name : 'Customer';
+    const customerId = customer.length > 0 ? customer[0].customer_id : 'N/A';
     const warehouseName = warehouse.length > 0 ? warehouse[0].stock_point_name : 'Warehouse';
     
-    let title, message;
+    const scheduledDateTime = new Date(scheduled_date);
+    const formattedDate = scheduledDateTime.toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+    const formattedTime = scheduledDateTime.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+    
+    let title, message, emailSubject, emailHtml;
     
     if (newStatus === 'completed') {
       title = '✅ Warehouse Visit Completed';
       message = `Your warehouse visit at ${warehouseName} has been marked as completed.
         Barcode: ${barcode}
         Thank you for your visit!`;
+      
+      emailSubject = '✅ Warehouse Visit Completed - Jiyaa Jewels';
+      emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background: #ffffff;">
+          <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #f0f0f0;">
+            <h2 style="color: #4F46E5; margin: 0;">Jiyaa Jewels</h2>
+            <p style="color: #666; margin: 5px 0 0 0;">Visit Completed</p>
+          </div>
+          
+          <div style="padding: 20px 0;">
+            <p style="font-size: 16px; color: #333;">Dear <strong>${customerName}</strong>,</p>
+            
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              Your warehouse visit at <strong>${warehouseName}</strong> has been successfully completed.
+            </p>
+            
+            <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #4CAF50;">
+              <p style="font-size: 14px; color: #333; margin: 0;">
+                <strong>Barcode:</strong> ${barcode}<br>
+                <strong>Date:</strong> ${formattedDate}<br>
+                <strong>Time:</strong> ${formattedTime}
+              </p>
+            </div>
+            
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              Thank you for visiting Jiyaa Jewels. We hope you had a great experience!
+            </p>
+          </div>
+          
+          <div style="padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center; color: #888; font-size: 13px;">
+            <p style="margin: 0;">Thank you for choosing Jiyaa Jewels</p>
+          </div>
+        </div>
+      `;
     } else if (newStatus === 'cancelled') {
       title = '❌ Warehouse Visit Cancelled';
       message = `Your warehouse visit at ${warehouseName} has been cancelled.
         Barcode: ${barcode}
         Please contact us for more information.`;
+      
+      emailSubject = '❌ Warehouse Visit Cancelled - Jiyaa Jewels';
+      emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background: #ffffff;">
+          <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #f0f0f0;">
+            <h2 style="color: #4F46E5; margin: 0;">Jiyaa Jewels</h2>
+            <p style="color: #666; margin: 5px 0 0 0;">Visit Cancelled</p>
+          </div>
+          
+          <div style="padding: 20px 0;">
+            <p style="font-size: 16px; color: #333;">Dear <strong>${customerName}</strong>,</p>
+            
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              We regret to inform you that your warehouse visit at <strong>${warehouseName}</strong> 
+              scheduled for <strong>${formattedDate} at ${formattedTime}</strong> has been cancelled.
+            </p>
+            
+            <div style="background: #fff3e0; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #FF9800;">
+              <p style="font-size: 14px; color: #555; margin: 0;">
+                <strong>Barcode:</strong> ${barcode}
+              </p>
+            </div>
+            
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              If you have any questions, please contact our support team.
+            </p>
+          </div>
+          
+          <div style="padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center; color: #888; font-size: 13px;">
+            <p style="margin: 0;">Thank you for choosing Jiyaa Jewels</p>
+          </div>
+        </div>
+      `;
     } else {
       return; // No notification for 'scheduled' status
+    }
+    
+    // Get customer email from users table
+    const customerEmail = await getCustomerEmail(customer_account_id);
+    
+    // Send email to customer if email exists
+    if (customerEmail && emailSubject && emailHtml) {
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: customerEmail,
+        subject: emailSubject,
+        html: emailHtml
+      });
+      
+      console.log(`✅ Status email sent to customer ${customerEmail}`);
     }
     
     // Insert notification for customer
@@ -834,9 +1365,58 @@ async function createWarehouseScheduleStatusNotification(scheduleData, newStatus
     
     console.log(`✅ Warehouse schedule status notification sent to customer ${customer_account_id}`);
     
-    // Send notification to salesman if assigned
+    // Send notification and email to salesman if assigned
     if (salesman_id) {
-      const salesmanTitle = newStatus === 'completed' ? '✅ Warehouse Visit Completed' : '❌ Warehouse Visit Cancelled';
+      // Get salesman email from account_details
+      const salesmanEmail = await getSalesmanEmail(salesman_id);
+      
+      if (salesmanEmail) {
+        const salesmanSubject = newStatus === 'completed' 
+          ? '✅ Warehouse Visit Completed - Jiyaa Jewels' 
+          : '❌ Warehouse Visit Cancelled - Jiyaa Jewels';
+        const salesmanHtml = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background: #ffffff;">
+            <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #f0f0f0;">
+              <h2 style="color: #4F46E5; margin: 0;">Jiyaa Jewels</h2>
+              <p style="color: #666; margin: 5px 0 0 0;">Visit Status Update</p>
+            </div>
+            
+            <div style="padding: 20px 0;">
+              <p style="font-size: 16px; color: #333;">Dear <strong>${salesman_name || 'Salesperson'}</strong>,</p>
+              
+              <p style="font-size: 15px; color: #444; line-height: 1.6;">
+                The warehouse visit for customer <strong>${customerName}</strong> (${customerId}) 
+                at <strong>${warehouseName}</strong> has been marked as <strong>${newStatus}</strong>.
+              </p>
+              
+              <div style="background: ${newStatus === 'completed' ? '#e8f5e9' : '#fff3e0'}; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid ${newStatus === 'completed' ? '#4CAF50' : '#FF9800'};">
+                <p style="font-size: 14px; color: #333; margin: 0;">
+                  <strong>Barcode:</strong> ${barcode}<br>
+                  <strong>Date:</strong> ${formattedDate}<br>
+                  <strong>Time:</strong> ${formattedTime}
+                </p>
+              </div>
+            </div>
+            
+            <div style="padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center; color: #888; font-size: 13px;">
+              <p style="margin: 0;">Thank you for your service</p>
+            </div>
+          </div>
+        `;
+        
+        await transporter.sendMail({
+          from: process.env.EMAIL_USER,
+          to: salesmanEmail,
+          subject: salesmanSubject,
+          html: salesmanHtml
+        });
+        
+        console.log(`✅ Status email sent to salesman ${salesmanEmail}`);
+      }
+      
+      const salesmanTitle = newStatus === 'completed' 
+        ? '✅ Warehouse Visit Completed' 
+        : '❌ Warehouse Visit Cancelled';
       const salesmanMessage = `Warehouse visit status updated to ${newStatus}.
         Customer: ${customerName}
         Warehouse: ${warehouseName}
@@ -898,14 +1478,14 @@ router.patch('/:id/status', async (req, res) => {
       });
     }
     
-    // Send status update notification
+    // Send status update notification with email
     await createWarehouseScheduleStatusNotification(schedule[0], status);
     
     console.log(`✅ Schedule ${id} status updated to ${status}`);
     
     res.json({ 
       success: true, 
-      message: `Schedule status updated to ${status} with notification sent` 
+      message: `Schedule status updated to ${status} with notification and email sent` 
     });
     
   } catch (error) {
@@ -960,7 +1540,8 @@ router.get('/account-details', async (req, res) => {
         duty_end_time
       FROM account_details 
       WHERE account_group = 'CUSTOMERS'
-      ORDER BY account_name ASC    `);
+      ORDER BY account_name ASC
+    `);
     
     console.log(`✅ Found ${accounts.length} customers`);
     res.json(accounts);
@@ -973,14 +1554,14 @@ router.get('/account-details', async (req, res) => {
   }
 });
 
-// Helper function for salesman assignment notification
+// Helper function for salesman assignment notification with email
 async function createSalesmanAssignmentNotification(scheduleData, salesmanId, salesmanName) {
   try {
     const { customer_account_id, warehouse_id, barcode, scheduled_date } = scheduleData;
     
     // Get customer details
     const customer = await queryAsync(
-      'SELECT account_name, customer_id, email, mobile FROM account_details WHERE account_id = ?',
+      'SELECT account_name, customer_id, user_id FROM account_details WHERE account_id = ?',
       [customer_account_id]
     );
     
@@ -991,6 +1572,7 @@ async function createSalesmanAssignmentNotification(scheduleData, salesmanId, sa
     );
     
     const customerName = customer.length > 0 ? customer[0].account_name : 'Customer';
+    const customerId = customer.length > 0 ? customer[0].customer_id : 'N/A';
     const warehouseName = warehouse.length > 0 ? warehouse[0].stock_point_name : 'Warehouse';
     
     const scheduledDateTime = new Date(scheduled_date);
@@ -1006,7 +1588,73 @@ async function createSalesmanAssignmentNotification(scheduleData, salesmanId, sa
       hour12: true
     });
     
-    // Notification to customer about salesman assignment
+    // Get customer email from users table
+    const customerEmail = await getCustomerEmail(customer_account_id);
+    
+    // Send email to customer if email exists
+    if (customerEmail) {
+      const subject = '👤 Salesperson Assigned - Jiyaa Jewels';
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background: #ffffff;">
+          <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #f0f0f0;">
+            <h2 style="color: #4F46E5; margin: 0;">Jiyaa Jewels</h2>
+            <p style="color: #666; margin: 5px 0 0 0;">Salesperson Assigned</p>
+          </div>
+          
+          <div style="padding: 20px 0;">
+            <p style="font-size: 16px; color: #333;">Dear <strong>${customerName}</strong>,</p>
+            
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              <strong>${salesmanName}</strong> has been assigned as your salesperson for your warehouse visit.
+            </p>
+            
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555; width: 40%;">Salesperson</td>
+                  <td style="padding: 8px 10px; color: #333;">${salesmanName}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Warehouse</td>
+                  <td style="padding: 8px 10px; color: #333;">${warehouseName}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Barcode</td>
+                  <td style="padding: 8px 10px; color: #333; font-family: monospace;">${barcode}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Date</td>
+                  <td style="padding: 8px 10px; color: #333;">${formattedDate}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Time</td>
+                  <td style="padding: 8px 10px; color: #333;">${formattedTime}</td>
+                </tr>
+              </table>
+            </div>
+            
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              Your salesperson will assist you during your visit.
+            </p>
+          </div>
+          
+          <div style="padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center; color: #888; font-size: 13px;">
+            <p style="margin: 0;">Thank you for choosing Jiyaa Jewels</p>
+          </div>
+        </div>
+      `;
+      
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: customerEmail,
+        subject: subject,
+        html: html
+      });
+      
+      console.log(`✅ Salesman assignment email sent to customer ${customerEmail}`);
+    }
+    
+    // Notification to customer
     const customerTitle = '👤 Salesperson Assigned';
     const customerMessage = `${salesmanName} has been assigned as your salesperson for your warehouse visit at ${warehouseName} on ${formattedDate} at ${formattedTime}.
       Barcode: ${barcode}
@@ -1020,12 +1668,83 @@ async function createSalesmanAssignmentNotification(scheduleData, salesmanId, sa
     
     console.log(`✅ Salesman assignment notification sent to customer ${customer_account_id}`);
     
-    // Notification to salesman about assignment
+    // Get salesman email from account_details
+    const salesmanEmail = await getSalesmanEmail(salesmanId);
+    
+    // Send email to salesman if email exists
+    if (salesmanEmail) {
+      const subject = '👤 New Salesperson Assignment - Jiyaa Jewels';
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background: #ffffff;">
+          <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #f0f0f0;">
+            <h2 style="color: #4F46E5; margin: 0;">Jiyaa Jewels</h2>
+            <p style="color: #666; margin: 5px 0 0 0;">New Assignment</p>
+          </div>
+          
+          <div style="padding: 20px 0;">
+            <p style="font-size: 16px; color: #333;">Dear <strong>${salesmanName}</strong>,</p>
+            
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              You have been assigned as the salesperson for customer <strong>${customerName}</strong> (${customerId}).
+            </p>
+            
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555; width: 40%;">Customer</td>
+                  <td style="padding: 8px 10px; color: #333;">${customerName}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Customer ID</td>
+                  <td style="padding: 8px 10px; color: #333;">${customerId}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Warehouse</td>
+                  <td style="padding: 8px 10px; color: #333;">${warehouseName}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Barcode</td>
+                  <td style="padding: 8px 10px; color: #333; font-family: monospace;">${barcode}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Date</td>
+                  <td style="padding: 8px 10px; color: #333;">${formattedDate}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Time</td>
+                  <td style="padding: 8px 10px; color: #333;">${formattedTime}</td>
+                </tr>
+              </table>
+            </div>
+            
+            <div style="background: #fff3e0; padding: 12px; border-radius: 6px; border-left: 4px solid #FF9800; margin: 15px 0;">
+              <p style="font-size: 13px; color: #555; margin: 0;">
+                <strong>⚠️ Action Required:</strong> Please prepare for the visit and ensure you have all necessary materials.
+              </p>
+            </div>
+          </div>
+          
+          <div style="padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center; color: #888; font-size: 13px;">
+            <p style="margin: 0;">Thank you for your service</p>
+          </div>
+        </div>
+      `;
+      
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: salesmanEmail,
+        subject: subject,
+        html: html
+      });
+      
+      console.log(`✅ Salesman assignment email sent to salesman ${salesmanEmail}`);
+    }
+    
+    // Notification to salesman
     const salesmanTitle = '👤 New Salesperson Assignment';
     const salesmanMessage = `You have been assigned to visit ${customerName} at ${warehouseName} on ${formattedDate} at ${formattedTime}.
       Barcode: ${barcode}
-      Customer: ${customerName} (${customer.length > 0 ? customer[0].customer_id : 'N/A'})
-      ${customer.length > 0 && customer[0].mobile ? `Contact: ${customer[0].mobile}` : ''}`;
+      Customer: ${customerName} (${customerId})`;
     
     await queryAsync(
       `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
@@ -1101,14 +1820,14 @@ router.put('/:id/assign-salesman', async (req, res) => {
       });
     }
     
-    // Send salesman assignment notification
+    // Send salesman assignment notification with email
     await createSalesmanAssignmentNotification(existing[0], salesman_id, finalSalesmanName);
     
     console.log(`✅ Salesman assigned to schedule ${id} successfully`);
     
     res.json({
       success: true,
-      message: 'Salesman assigned successfully with notification sent',
+      message: 'Salesman assigned successfully with notification and email sent',
       data: {
         schedule_id: id,
         salesman_id: salesman_id,

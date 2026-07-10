@@ -140,9 +140,8 @@ exports.saveReceivedSalesman = (req, res) => {
       return processedItem;
     });
 
-    // Extract product codes and assigned IDs
+    // Extract product codes
     const productCodes = processedTransferData.map(item => item.PCode_BarCode).filter(code => code);
-    const assignedIds = processedTransferData.map(item => item.assigned_id).filter(id => id);
 
     // Insert transfer records with capture image and StockOutWard fields
     receivedSalesmanModel.insert(
@@ -180,40 +179,17 @@ exports.saveReceivedSalesman = (req, res) => {
               }
               console.log(`Updated ${updateResult?.updatedCount || 0} products with individual statuses`);
               
-              // After updating stock points, delete the assigned records
-              if (assignedIds.length > 0) {
-                receivedSalesmanModel.deleteAssignedRecords(assignedIds, (deleteErr, deleteResult) => {
-                  if (deleteErr) {
-                    console.error("Error deleting assigned records:", deleteErr);
-                  }
-                  console.log(`Deleted ${deleteResult?.deletedCount || 0} assigned records`);
-                  
-                  res.json({ 
-                    message: "Received from salesman completed successfully", 
-                    transfer_id: result.transfer_id,
-                    transfer_number: result.transfer_number,
-                    capture_image: savedCaptureImagePath,
-                    stock_outward_barcode: stock_outward_barcode,
-                    stock_outward_gross_wt: stock_outward_gross_wt,
-                    stock_outward_type: stock_outward_type,
-                    stock_outward_packet_barcode: stock_outward_packet_barcode,
-                    items_updated: updateResult?.updatedCount || 0,
-                    records_deleted: deleteResult?.deletedCount || 0
-                  });
-                });
-              } else {
-                res.json({ 
-                  message: "Received from salesman completed successfully", 
-                  transfer_id: result.transfer_id,
-                  transfer_number: result.transfer_number,
-                  capture_image: savedCaptureImagePath,
-                  stock_outward_barcode: stock_outward_barcode,
-                  stock_outward_gross_wt: stock_outward_gross_wt,
-                  stock_outward_type: stock_outward_type,
-                  stock_outward_packet_barcode: stock_outward_packet_barcode,
-                  items_updated: updateResult?.updatedCount || 0
-                });
-              }
+              res.json({ 
+                message: "Received from salesman completed successfully", 
+                transfer_id: result.transfer_id,
+                transfer_number: result.transfer_number,
+                capture_image: savedCaptureImagePath,
+                stock_outward_barcode: stock_outward_barcode,
+                stock_outward_gross_wt: stock_outward_gross_wt,
+                stock_outward_type: stock_outward_type,
+                stock_outward_packet_barcode: stock_outward_packet_barcode,
+                items_updated: updateResult?.updatedCount || 0
+              });
             }
           );
         } else {

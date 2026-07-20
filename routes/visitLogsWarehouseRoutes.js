@@ -1140,6 +1140,7 @@ router.delete('/:id', async (req, res) => {
 });
 
 // GET - Get barcodes for a specific warehouse/stock point
+// GET - Get barcodes for a specific warehouse/stock point (excluding already scheduled ones)
 router.get('/barcodes/:warehouseId', async (req, res) => {
   try {
     const { warehouseId } = req.params;
@@ -1164,10 +1165,17 @@ router.get('/barcodes/:warehouseId', async (req, res) => {
       JOIN stock_transfers st ON sti.transfer_id = st.transfer_id
       WHERE (st.from_stock_point_id = ? OR st.to_stock_point_id = ?)
         AND st.status = 'completed'
+        AND sti.PCode_BarCode NOT IN (
+          SELECT DISTINCT barcode 
+          FROM visit_logs_warehouse_schedule 
+          WHERE status = 'scheduled'
+            AND barcode IS NOT NULL
+            AND barcode != ''
+        )
       ORDER BY st.transfer_date DESC
     `, [warehouseId, warehouseId]);
     
-    console.log(`✅ Found ${barcodes.length} barcodes`);
+    console.log(`✅ Found ${barcodes.length} available barcodes (excluding already scheduled)`);
     res.json({
       success: true,
       barcodes: barcodes

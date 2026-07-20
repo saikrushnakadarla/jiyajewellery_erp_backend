@@ -116,7 +116,7 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
             <p style="font-size: 16px; color: #333;">Dear <strong>${recipientName || 'Customer'}</strong>,</p>
             
             <p style="font-size: 15px; color: #444; line-height: 1.6;">
-              A warehouse visit has been scheduled for you. Please find the details below:
+              A Sales  visit has been scheduled for you. Please find the details below:
             </p>
             
             <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
@@ -133,14 +133,7 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
                   <td style="padding: 8px 10px; font-weight: bold; color: #555;">Warehouse</td>
                   <td style="padding: 8px 10px; color: #333;">${warehouseName || 'N/A'}</td>
                 </tr>
-                <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Product</td>
-                  <td style="padding: 8px 10px; color: #333;">${productName || 'N/A'}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Barcode</td>
-                  <td style="padding: 8px 10px; color: #333; font-family: monospace;">${barcode || 'N/A'}</td>
-                </tr>
+              
                 <tr>
                   <td style="padding: 8px 10px; font-weight: bold; color: #555;">Date</td>
                   <td style="padding: 8px 10px; color: #333;">${scheduledDate || 'N/A'}</td>
@@ -187,7 +180,7 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
             <p style="font-size: 16px; color: #333;">Dear <strong>${recipientName || 'Salesperson'}</strong>,</p>
             
             <p style="font-size: 15px; color: #444; line-height: 1.6;">
-              You have been assigned a new warehouse visit. Please review the details below:
+              You have been assigned a new Customer visit. Please review the details below:
             </p>
             
             <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
@@ -204,14 +197,7 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
                   <td style="padding: 8px 10px; font-weight: bold; color: #555;">Warehouse</td>
                   <td style="padding: 8px 10px; color: #333;">${warehouseName || 'N/A'}</td>
                 </tr>
-                <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Product</td>
-                  <td style="padding: 8px 10px; color: #333;">${productName || 'N/A'}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Barcode</td>
-                  <td style="padding: 8px 10px; color: #333; font-family: monospace;">${barcode || 'N/A'}</td>
-                </tr>
+
                 <tr>
                   <td style="padding: 8px 10px; font-weight: bold; color: #555;">Date</td>
                   <td style="padding: 8px 10px; color: #333;">${scheduledDate || 'N/A'}</td>
@@ -317,7 +303,7 @@ async function createWarehouseScheduleNotification(customerAccountId, warehouseI
     
     // Create notification in database for customer
     const title = '📦 New Warehouse Visit Scheduled';
-    const message = `A warehouse visit has been scheduled for you at ${warehouseName} on ${formattedDate} at ${formattedTime}. 
+    const message = `A Sales  visit has been scheduled for you at ${warehouseName} on ${formattedDate} at ${formattedTime}. 
       Product: ${productName} (Barcode: ${barcode})
       ${salesmanName ? `Salesperson: ${salesmanName}` : 'No salesperson assigned yet.'}
       Please be available at the scheduled time.`;

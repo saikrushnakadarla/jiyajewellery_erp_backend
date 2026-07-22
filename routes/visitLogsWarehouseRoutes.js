@@ -319,28 +319,28 @@ async function createWarehouseScheduleNotification(customerAccountId, warehouseI
     // Send notification and email to salesman if assigned
     if (salesmanId) {
       // Get salesman email from account_details
-      const salesmanEmail = await getSalesmanEmail(salesmanId);
+      // const salesmanEmail = await getSalesmanEmail(salesmanId);
       
-      // Send email to salesman if email exists
-      if (salesmanEmail) {
-        await sendVisitScheduleEmail(
-          salesmanEmail,
-          salesmanName || 'Salesperson',
-          'salesman',
-          {
-            customerName,
-            warehouseName,
-            barcode,
-            productName,
-            scheduledDate: formattedDate,
-            scheduledTime: formattedTime,
-            salesmanName: salesmanName || 'Salesperson',
-            customerId
-          }
-        );
-      } else {
-        console.log(`⚠️ No email found for salesman ${salesmanId}`);
-      }
+      // // Send email to salesman if email exists
+      // if (salesmanEmail) {
+      //   await sendVisitScheduleEmail(
+      //     salesmanEmail,
+      //     salesmanName || 'Salesperson',
+      //     'salesman',
+      //     {
+      //       customerName,
+      //       warehouseName,
+      //       barcode,
+      //       productName,
+      //       scheduledDate: formattedDate,
+      //       scheduledTime: formattedTime,
+      //       salesmanName: salesmanName || 'Salesperson',
+      //       customerId
+      //     }
+      //   );
+      // } else {
+      //   console.log(`⚠️ No email found for salesman ${salesmanId}`);
+      // }
       
       const salesmanTitle = '📦 New Warehouse Visit Assignment';
       const salesmanMessage = `You have been assigned to visit ${customerName} at ${warehouseName} on ${formattedDate} at ${formattedTime}.
@@ -735,27 +735,27 @@ async function createWarehouseScheduleUpdateNotification(customerAccountId, ware
     
     // Send notification and email to salesman if assigned
     if (salesmanId) {
-      // Get salesman email from account_details
-      const salesmanEmail = await getSalesmanEmail(salesmanId);
+      // // Get salesman email from account_details
+      // const salesmanEmail = await getSalesmanEmail(salesmanId);
       
-      // Send email to salesman if email exists
-      if (salesmanEmail) {
-        await sendVisitScheduleEmail(
-          salesmanEmail,
-          salesmanName || 'Salesperson',
-          'salesman',
-          {
-            customerName,
-            warehouseName,
-            barcode,
-            productName,
-            scheduledDate: formattedDate,
-            scheduledTime: formattedTime,
-            salesmanName: salesmanName || 'Salesperson',
-            customerId
-          }
-        );
-      }
+      // // Send email to salesman if email exists
+      // if (salesmanEmail) {
+      //   await sendVisitScheduleEmail(
+      //     salesmanEmail,
+      //     salesmanName || 'Salesperson',
+      //     'salesman',
+      //     {
+      //       customerName,
+      //       warehouseName,
+      //       barcode,
+      //       productName,
+      //       scheduledDate: formattedDate,
+      //       scheduledTime: formattedTime,
+      //       salesmanName: salesmanName || 'Salesperson',
+      //       customerId
+      //     }
+      //   );
+      // }
       
       const salesmanTitle = '📦 Warehouse Visit Assignment Updated';
       const salesmanMessage = `Your warehouse visit assignment has been updated.

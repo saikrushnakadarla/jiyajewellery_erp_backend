@@ -62,7 +62,7 @@ const generateCustomerId = () => {
   });
 };
 
-// Insert new account record - FIXED SQL with correct number of placeholders
+// Insert new account record - UPDATED with district column
 const createAccount = async (data, files) => {
   return new Promise(async (resolve, reject) => {
     try {
@@ -84,20 +84,15 @@ const createAccount = async (data, files) => {
         imageData = JSON.stringify(images);
       }
       
-      // FIXED: Count the columns - 32 columns total
-      // Columns: account_name, print_name, account_group, op_bal, metal_balance, dr_cr,
-      // address1, address2, city, pincode, state, state_code,
-      // phone, mobile, contact_person, email, birthday, anniversary,
-      // bank_account_no, bank_name, ifsc_code, branch, gst_in, aadhar_card,
-      // pan_card, religion, images, customer_id, user_id, password, duty_start_time, duty_end_time
+      // UPDATED: Added district column (33 columns total)
       const sql = `INSERT INTO account_details (
           account_name, print_name, account_group, op_bal, metal_balance, dr_cr,
-          address1, address2, city, pincode, state, state_code,
+          address1, address2, city, district, pincode, state, state_code,
           phone, mobile, contact_person, email, birthday, anniversary,
           bank_account_no, bank_name, ifsc_code, branch, gst_in, aadhar_card,
           pan_card, religion, images, customer_id, user_id, password,
           duty_start_time, duty_end_time
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
       const values = [
           data.account_name, 
@@ -108,7 +103,8 @@ const createAccount = async (data, files) => {
           data.dr_cr || null,
           data.address1 || null, 
           data.address2 || null, 
-          data.city || null, 
+          data.city || null,
+          data.district || null, // Added district
           data.pincode || null, 
           data.state || null, 
           data.state_code || null,
@@ -177,7 +173,7 @@ const checkDutyHoursByAccountId = (accountId, callback) => {
     db.query(sql, [accountId], callback);
 };
 
-// Update account by ID
+// Update account by ID - UPDATED with district
 const updateAccount = (id, data, files, imagesToKeep, callback) => {
     db.query('SELECT images FROM account_details WHERE account_id = ?', [id], (err, results) => {
         if (err) {
@@ -216,9 +212,10 @@ const updateAccount = (id, data, files, imagesToKeep, callback) => {
         const allImages = [...keptImages, ...newImages];
         const imageData = allImages.length > 0 ? JSON.stringify(allImages) : null;
         
+        // UPDATED: Added district column
         const sql = `UPDATE account_details SET 
             account_name = ?, print_name = ?, account_group = ?, op_bal = ?, metal_balance = ?, dr_cr = ?,
-            address1 = ?, address2 = ?, city = ?, pincode = ?, state = ?, state_code = ?,
+            address1 = ?, address2 = ?, city = ?, district = ?, pincode = ?, state = ?, state_code = ?,
             phone = ?, mobile = ?, contact_person = ?, email = ?, birthday = ?, anniversary = ?,
             bank_account_no = ?, bank_name = ?, ifsc_code = ?, branch = ?, gst_in = ?, aadhar_card = ?, 
             pan_card = ?, religion = ?, images = ?
@@ -227,7 +224,8 @@ const updateAccount = (id, data, files, imagesToKeep, callback) => {
         const values = [
             data.account_name, data.print_name, data.account_group, data.op_bal || null, 
             data.metal_balance || null, data.dr_cr || null,
-            data.address1 || null, data.address2 || null, data.city || null, 
+            data.address1 || null, data.address2 || null, data.city || null,
+            data.district || null, // Added district
             data.pincode || null, data.state || null, data.state_code || null,
             data.phone || null, data.mobile || null, data.contact_person || null, 
             data.email || null, data.birthday || null, data.anniversary || null,

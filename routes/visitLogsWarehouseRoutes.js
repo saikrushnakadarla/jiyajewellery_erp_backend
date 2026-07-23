@@ -97,6 +97,7 @@ async function getSalesmanEmail(salesmanId) {
 }
 
 // Helper function to send email
+// Helper function to send email - UPDATED VERSION
 async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, data) {
   try {
     const { customerName, warehouseName, barcode, productName, scheduledDate, scheduledTime, salesmanName, customerId } = data;
@@ -116,24 +117,19 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
             <p style="font-size: 16px; color: #333;">Dear <strong>${recipientName || 'Customer'}</strong>,</p>
             
             <p style="font-size: 15px; color: #444; line-height: 1.6;">
-              A Sales  visit has been scheduled for you. Please find the details below:
+              A Sales visit has been scheduled for you. Please find the details below:
             </p>
             
             <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
               <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
                 <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555; width: 40%;">Customer</td>
-                  <td style="padding: 8px 10px; color: #333;">${customerName || 'N/A'}</td>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555; width: 40%;">Salesman Name</td>
+                  <td style="padding: 8px 10px; color: #333;">${salesmanName || 'Not assigned yet'}</td>
                 </tr>
                 <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Customer ID</td>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Salesman ID</td>
                   <td style="padding: 8px 10px; color: #333;">${customerId || 'N/A'}</td>
                 </tr>
-                <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Warehouse</td>
-                  <td style="padding: 8px 10px; color: #333;">${warehouseName || 'N/A'}</td>
-                </tr>
-              
                 <tr>
                   <td style="padding: 8px 10px; font-weight: bold; color: #555;">Date</td>
                   <td style="padding: 8px 10px; color: #333;">${scheduledDate || 'N/A'}</td>
@@ -141,10 +137,6 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
                 <tr>
                   <td style="padding: 8px 10px; font-weight: bold; color: #555;">Time</td>
                   <td style="padding: 8px 10px; color: #333;">${scheduledTime || 'N/A'}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Salesperson</td>
-                  <td style="padding: 8px 10px; color: #333;">${salesmanName || 'Not assigned yet'}</td>
                 </tr>
               </table>
             </div>
@@ -186,18 +178,13 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
             <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
               <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
                 <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555; width: 40%;">Customer</td>
-                  <td style="padding: 8px 10px; color: #333;">${customerName || 'N/A'}</td>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555; width: 40%;">Salesman Name</td>
+                  <td style="padding: 8px 10px; color: #333;">${salesmanName || 'Not assigned yet'}</td>
                 </tr>
                 <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Customer ID</td>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Salesman ID</td>
                   <td style="padding: 8px 10px; color: #333;">${customerId || 'N/A'}</td>
                 </tr>
-                <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Warehouse</td>
-                  <td style="padding: 8px 10px; color: #333;">${warehouseName || 'N/A'}</td>
-                </tr>
-
                 <tr>
                   <td style="padding: 8px 10px; font-weight: bold; color: #555;">Date</td>
                   <td style="padding: 8px 10px; color: #333;">${scheduledDate || 'N/A'}</td>
@@ -294,7 +281,7 @@ async function createWarehouseScheduleNotification(customerAccountId, warehouseI
           scheduledDate: formattedDate,
           scheduledTime: formattedTime,
           salesmanName: salesmanName || 'Not assigned yet',
-          customerId
+          customerId: salesmanId || 'N/A'
         }
       );
     } else {

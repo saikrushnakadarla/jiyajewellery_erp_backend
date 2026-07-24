@@ -290,7 +290,7 @@ async function createWarehouseScheduleNotification(customerAccountId, warehouseI
     
     // Create notification in database for customer
     const title = '📦 New Warehouse Visit Scheduled';
-    const message = `A Sales  visit has been scheduled for you at ${warehouseName} on ${formattedDate} at ${formattedTime}. 
+    const message = `A Sales visit has been scheduled for you at ${warehouseName} on ${formattedDate} at ${formattedTime}. 
       Product: ${productName} (Barcode: ${barcode})
       ${salesmanName ? `Salesperson: ${salesmanName}` : 'No salesperson assigned yet.'}
       Please be available at the scheduled time.`;
@@ -342,6 +342,23 @@ async function createWarehouseScheduleNotification(customerAccountId, warehouseI
       
       console.log(`✅ Warehouse schedule notification sent to salesman ${salesmanId}`);
     }
+    
+    // NEW: Create notification for warehouse (NO EMAIL)
+    const warehouseTitle = '📦 New Customer Visit Scheduled';
+    const warehouseMessage = `A new customer visit has been scheduled at your warehouse.
+      Customer: ${customerName} (${customerId})
+      Date: ${formattedDate} at ${formattedTime}
+      Product: ${productName} (Barcode: ${barcode})
+      Salesperson: ${salesmanName || 'Not assigned yet'}
+      Please prepare for the customer visit.`;
+    
+    await queryAsync(
+      `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
+       VALUES (?, 'warehouse', ?, ?, 'warehouse_schedule', ?, NOW())`,
+      [warehouseId, warehouseTitle, warehouseMessage, customerAccountId]
+    );
+    
+    console.log(`✅ Warehouse schedule notification sent to warehouse ${warehouseId}`);
     
     return true;
   } catch (error) {
@@ -623,7 +640,7 @@ router.post('/', async (req, res) => {
       insertedIds.push(result.insertId);
       console.log(`✅ Schedule inserted with ID: ${result.insertId} (customer_id: ${actualCustomerId}, salesman: ${finalSalesmanName || 'Not assigned'})`);
       
-      // Send notification and email for each barcode
+      // Send notification and email for each barcode (warehouse gets only notification)
       const barcodeDetail = barcodeDetails.find(b => b.PCode_BarCode === barcode);
       await createWarehouseScheduleNotification(
         customerIdInt, 
@@ -638,7 +655,7 @@ router.post('/', async (req, res) => {
     
     res.status(201).json({ 
       success: true, 
-      message: `${validBarcodes.length} warehouse visits scheduled successfully with notifications and emails sent`,
+      message: `${validBarcodes.length} warehouse visits scheduled successfully with notifications sent to customer, salesman, and warehouse (emails to customer and salesman only)`,
       scheduleIds: insertedIds
     });
     
@@ -651,7 +668,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Helper function for update notification with email
+// Helper function for update notification (warehouse gets only notification, no email)
 async function createWarehouseScheduleUpdateNotification(customerAccountId, warehouseId, barcode, scheduledDate, salesmanId, salesmanName, oldSchedule, barcodeDetails) {
   try {
     // Get customer details
@@ -759,6 +776,22 @@ async function createWarehouseScheduleUpdateNotification(customerAccountId, ware
       
       console.log(`✅ Warehouse schedule update notification sent to salesman ${salesmanId}`);
     }
+    
+    // NEW: Create update notification for warehouse (NO EMAIL)
+    const warehouseTitle = '📦 Warehouse Visit Updated';
+    const warehouseMessage = `A warehouse visit has been updated.
+      Customer: ${customerName} (${customerId})
+      Date: ${formattedDate} at ${formattedTime}
+      Barcode: ${barcode}
+      Salesperson: ${salesmanName || 'Not assigned yet'}`;
+    
+    await queryAsync(
+      `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
+       VALUES (?, 'warehouse', ?, ?, 'warehouse_schedule', ?, NOW())`,
+      [warehouseId, warehouseTitle, warehouseMessage, customerAccountId]
+    );
+    
+    console.log(`✅ Warehouse schedule update notification sent to warehouse ${warehouseId}`);
   } catch (error) {
     console.error('❌ Error creating warehouse update notification:', error);
   }
@@ -904,7 +937,7 @@ router.put('/:id', async (req, res) => {
     
     console.log(`✅ Schedule ${id} updated successfully with ${insertedIds.length} new entries`);
     
-    res.json({ success: true, message: 'Warehouse schedule updated successfully with notifications and emails sent', scheduleIds: insertedIds });
+    res.json({ success: true, message: 'Warehouse schedule updated successfully with notifications sent to customer, salesman, and warehouse (emails to customer and salesman only)', scheduleIds: insertedIds });
     
   } catch (error) {
     console.error('❌ Error updating warehouse schedule:', error);
@@ -1076,6 +1109,21 @@ async function createWarehouseScheduleDeletionNotification(scheduleData) {
       
       console.log(`✅ Warehouse schedule deletion notification sent to salesman ${salesman_id}`);
     }
+    
+    // NEW: Create deletion notification for warehouse (NO EMAIL)
+    const warehouseTitle = '❌ Customer Visit Cancelled';
+    const warehouseMessage = `A customer visit at your warehouse has been cancelled.
+      Customer: ${customerName} (${customerId})
+      Date: ${formattedDate} at ${formattedTime}
+      Barcode: ${barcode}`;
+    
+    await queryAsync(
+      `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
+       VALUES (?, 'warehouse', ?, ?, 'warehouse_schedule', ?, NOW())`,
+      [warehouse_id, warehouseTitle, warehouseMessage, customer_account_id]
+    );
+    
+    console.log(`✅ Warehouse schedule deletion notification sent to warehouse ${warehouse_id}`);
   } catch (error) {
     console.error('❌ Error creating warehouse deletion notification:', error);
   }
@@ -1103,7 +1151,7 @@ router.delete('/:id', async (req, res) => {
     
     const scheduleData = schedule[0];
     
-    // Send deletion notifications with emails
+    // Send deletion notifications (warehouse gets only notification)
     await createWarehouseScheduleDeletionNotification(scheduleData);
     
     const result = await queryAsync(
@@ -1115,7 +1163,7 @@ router.delete('/:id', async (req, res) => {
       console.log(`✅ Schedule ${id} deleted successfully`);
     }
     
-    res.json({ success: true, message: 'Warehouse schedule deleted successfully with notifications and emails sent' });
+    res.json({ success: true, message: 'Warehouse schedule deleted successfully with notifications sent to customer, salesman, and warehouse (emails to customer and salesman only)' });
     
   } catch (error) {
     console.error('❌ Error deleting warehouse schedule:', error);
@@ -1205,7 +1253,7 @@ router.get('/customer/:customerId', async (req, res) => {
   }
 });
 
-// Helper function for status change notification with email
+// Helper function for status change notification (warehouse gets only notification, no email)
 async function createWarehouseScheduleStatusNotification(scheduleData, newStatus) {
   try {
     const { customer_account_id, warehouse_id, barcode, scheduled_date, salesman_id, salesman_name } = scheduleData;
@@ -1411,6 +1459,23 @@ async function createWarehouseScheduleStatusNotification(scheduleData, newStatus
       
       console.log(`✅ Warehouse schedule status notification sent to salesman ${salesman_id}`);
     }
+    
+    // NEW: Create status notification for warehouse (NO EMAIL)
+    const warehouseTitle = newStatus === 'completed' 
+      ? '✅ Customer Visit Completed' 
+      : '❌ Customer Visit Cancelled';
+    const warehouseMessage = `Customer visit status updated to ${newStatus}.
+      Customer: ${customerName} (${customerId})
+      Warehouse: ${warehouseName}
+      Barcode: ${barcode}`;
+    
+    await queryAsync(
+      `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
+       VALUES (?, 'warehouse', ?, ?, 'warehouse_schedule', ?, NOW())`,
+      [warehouse_id, warehouseTitle, warehouseMessage, customer_account_id]
+    );
+    
+    console.log(`✅ Warehouse schedule status notification sent to warehouse ${warehouse_id}`);
   } catch (error) {
     console.error('❌ Error creating warehouse status notification:', error);
   }
@@ -1459,14 +1524,14 @@ router.patch('/:id/status', async (req, res) => {
       });
     }
     
-    // Send status update notification with email
+    // Send status update notification (warehouse gets only notification)
     await createWarehouseScheduleStatusNotification(schedule[0], status);
     
     console.log(`✅ Schedule ${id} status updated to ${status}`);
     
     res.json({ 
       success: true, 
-      message: `Schedule status updated to ${status} with notification and email sent` 
+      message: `Schedule status updated to ${status} with notifications sent to customer, salesman, and warehouse (emails to customer and salesman only)` 
     });
     
   } catch (error) {
@@ -1535,7 +1600,7 @@ router.get('/account-details', async (req, res) => {
   }
 });
 
-// Helper function for salesman assignment notification with email
+// Helper function for salesman assignment notification (warehouse gets only notification, no email)
 async function createSalesmanAssignmentNotification(scheduleData, salesmanId, salesmanName) {
   try {
     const { customer_account_id, warehouse_id, barcode, scheduled_date } = scheduleData;
@@ -1548,7 +1613,7 @@ async function createSalesmanAssignmentNotification(scheduleData, salesmanId, sa
     
     // Get warehouse details
     const warehouse = await queryAsync(
-      'SELECT stock_point_name, location FROM stock_points WHERE stock_point_id = ?',
+      'SELECT stock_point_name FROM stock_points WHERE stock_point_id = ?',
       [warehouse_id]
     );
     
@@ -1734,6 +1799,22 @@ async function createSalesmanAssignmentNotification(scheduleData, salesmanId, sa
     );
     
     console.log(`✅ Salesman assignment notification sent to salesman ${salesmanId}`);
+    
+    // NEW: Create assignment notification for warehouse (NO EMAIL)
+    const warehouseTitle = '👤 Salesperson Assigned';
+    const warehouseMessage = `A salesperson has been assigned for a customer visit at your warehouse.
+      Salesperson: ${salesmanName}
+      Customer: ${customerName} (${customerId})
+      Date: ${formattedDate} at ${formattedTime}
+      Barcode: ${barcode}`;
+    
+    await queryAsync(
+      `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
+       VALUES (?, 'warehouse', ?, ?, 'warehouse_schedule', ?, NOW())`,
+      [warehouse_id, warehouseTitle, warehouseMessage, customer_account_id]
+    );
+    
+    console.log(`✅ Salesman assignment notification sent to warehouse ${warehouse_id}`);
   } catch (error) {
     console.error('❌ Error creating salesman assignment notification:', error);
   }
@@ -1801,14 +1882,14 @@ router.put('/:id/assign-salesman', async (req, res) => {
       });
     }
     
-    // Send salesman assignment notification with email
+    // Send salesman assignment notification (warehouse gets only notification)
     await createSalesmanAssignmentNotification(existing[0], salesman_id, finalSalesmanName);
     
     console.log(`✅ Salesman assigned to schedule ${id} successfully`);
     
     res.json({
       success: true,
-      message: 'Salesman assigned successfully with notification and email sent',
+      message: 'Salesman assigned successfully with notifications sent to customer, salesman, and warehouse (emails to customer and salesman only)',
       data: {
         schedule_id: id,
         salesman_id: salesman_id,

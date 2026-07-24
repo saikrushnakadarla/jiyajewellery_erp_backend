@@ -16,7 +16,7 @@ exports.insert = (
   created_by,
   from_user_id = null,
   to_user_id = null,
-  capture_image = null,  // <-- NEW: capture image path
+  capture_image = null,
   callback
 ) => {
   // Handle optional parameters
@@ -94,7 +94,7 @@ exports.insert = (
     totalNetWeight,
     'completed',
     remarks || null,
-    capture_image || null,  // <-- NEW: capture image path
+    capture_image || null,
     created_by || null
   ];
 
@@ -106,7 +106,7 @@ exports.insert = (
 
     const transferId = transferResult.insertId;
 
-    // Insert transfer items – image is now a file path (not base64)
+    // Insert transfer items with new fields: cover_wt, card_wt, packing_wt
     const insertItemsSql = `
       INSERT INTO stock_transfer_items (
         transfer_id,
@@ -128,6 +128,9 @@ exports.insert = (
         total_price,
         remarks,
         image,
+        cover_wt,
+        card_wt,
+        packing_wt,
         created_at
       ) VALUES ?
     `;
@@ -151,7 +154,10 @@ exports.insert = (
       parseFloat(item.stone_price) || 0,
       parseFloat(item.total_price) || 0,
       item.remarks || null,
-      item.image || null,      // ✅ file path, not base64
+      item.image || null,
+      parseFloat(item.cover_wt) || 0,
+      parseFloat(item.card_wt) || 0,
+      parseFloat(item.packing_wt) || 0,
       new Date()
     ]);
 

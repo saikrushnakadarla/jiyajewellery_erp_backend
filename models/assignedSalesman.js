@@ -10,7 +10,7 @@ exports.insert = (
   created_by,
   from_user_id = null,
   to_user_id = null,
-  capture_image = null,  // Capture image path
+  capture_image = null,
   callback
 ) => {
   // Handle optional parameters
@@ -83,7 +83,7 @@ exports.insert = (
     totalNetWeight,
     'completed',
     remarks || null,
-    capture_image || null,  // Store capture image path
+    capture_image || null,
     created_by || null
   ];
 
@@ -95,6 +95,7 @@ exports.insert = (
 
     const assignedId = transferResult.insertId;
 
+    // Updated INSERT with cover_wt, card_wt, packing_wt fields
     const insertItemsSql = `
       INSERT INTO assigned_salesman_items (
         assigned_id,
@@ -108,6 +109,9 @@ exports.insert = (
         design_name,
         qty,
         gross_weight,
+        cover_wt,
+        card_wt,
+        packing_wt,
         stone_weight,
         net_weight,
         rate,
@@ -121,7 +125,6 @@ exports.insert = (
     `;
 
     const itemValues = transfer_data.map(item => {
-      // Ensure image path is properly stored
       let imagePath = item.image || null;
       if (imagePath && imagePath.startsWith('http')) {
         const urlObj = new URL(imagePath);
@@ -143,6 +146,9 @@ exports.insert = (
         item.design_name || null,
         parseFloat(item.qty) || 0,
         parseFloat(item.gross_weight) || 0,
+        parseFloat(item.cover_wt) || 0,
+        parseFloat(item.card_wt) || 0,
+        parseFloat(item.packing_wt) || 0,
         parseFloat(item.stone_weight) || 0,
         parseFloat(item.net_weight) || 0,
         parseFloat(item.rate) || 0,
@@ -167,6 +173,7 @@ exports.insert = (
     });
   });
 };
+
 
 // FIXED: Only update user_id, NOT Stock_Point
 exports.updateStockPointForSalesman = (productCodes, salesmanId, callback) => {

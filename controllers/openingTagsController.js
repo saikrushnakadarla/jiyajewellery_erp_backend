@@ -74,7 +74,11 @@ const createOpeningTag = (req, res) => {
         mrp_price,
         total_pcs_cost,
         printing_purity,
-        source_from = "ERP"  // NEW: Source field for ERP - always "ERP"
+        source_from = "ERP",
+        // NEW FIELDS
+        Cover_Wt = 0,
+        Card_Wt = 0,
+        Packing_Wt = 0
     } = req.body;
 
     const productImage = req.file ? req.file.filename : null;
@@ -152,7 +156,11 @@ const createOpeningTag = (req, res) => {
         mrp_price: sanitizeValue(mrp_price),
         total_pcs_cost: sanitizeValue(total_pcs_cost),
         printing_purity: sanitizeValue(printing_purity),
-        source_from: source_from  // NEW: Source field for ERP
+        source_from: source_from,
+        // NEW FIELDS
+        Cover_Wt: sanitizeValue(Cover_Wt),
+        Card_Wt: sanitizeValue(Card_Wt),
+        Packing_Wt: sanitizeValue(Packing_Wt)
     };
 
     openingTagsModel.addOpeningTag(data, (err, result) => {

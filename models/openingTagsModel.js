@@ -33,7 +33,7 @@ const addOpeningTag = (data, callback) => {
             pur_MC_Per_Gram, pur_Making_Charges, pur_Wastage_On, pur_Wastage_Percentage, 
             pur_WastageWeight, pur_TotalWeight_AW, tag_weight, size, pcs, image, tax_percent,
             mrp_price, total_pcs_cost, pur_rate_cut, pur_Purity, pur_purityPercentage, printing_purity,
-            source_from
+            source_from, Cover_Wt, Card_Wt, Packing_Wt
         ) VALUES ?`;
 
         const values = insertEntries.map(entry => [
@@ -58,7 +58,10 @@ const addOpeningTag = (data, callback) => {
             entry.tag_weight, entry.size, entry.pcs, entry.image, entry.tax_percent, 
             entry.mrp_price, entry.total_pcs_cost, entry.pur_rate_cut, 
             entry.pur_Purity, entry.pur_purityPercentage, entry.printing_purity,
-            entry.source_from  // NEW: Source field
+            entry.source_from,
+            entry.Cover_Wt || 0,
+            entry.Card_Wt || 0,
+            entry.Packing_Wt || 0
         ]);
 
         db.query(sql, [values], (err, result) => {

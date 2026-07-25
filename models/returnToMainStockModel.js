@@ -97,73 +97,79 @@ exports.insert = (
 
         const returnId = returnResult.insertId;
 
-        // UPDATED: Include packet_barcode in the INSERT
-        const insertItemsSql = `
-            INSERT INTO return_to_main_stock_items (
-                return_id,
-                assigned_item_id,
-                product_id,
-                PCode_BarCode,
-                packet_barcode,
-                product_name,
-                metal_type,
-                purity,
-                category,
-                sub_category,
-                design_name,
-                qty,
-                gross_weight,
-                stone_weight,
-                net_weight,
-                rate,
-                making_charges,
-                stone_price,
-                total_price,
-                image,
-                remarks,
-                created_at
-            ) VALUES ?
-        `;
+        // UPDATED: Include cover_wt, card_wt, packing_wt in the INSERT
+const insertItemsSql = `
+    INSERT INTO return_to_main_stock_items (
+        return_id,
+        assigned_item_id,
+        product_id,
+        PCode_BarCode,
+        packet_barcode,
+        product_name,
+        metal_type,
+        purity,
+        category,
+        sub_category,
+        design_name,
+        qty,
+        gross_weight,
+        cover_wt,
+        card_wt,
+        packing_wt,
+        stone_weight,
+        net_weight,
+        rate,
+        making_charges,
+        stone_price,
+        total_price,
+        image,
+        remarks,
+        created_at
+    ) VALUES ?
+`;
 
-        const itemValues = return_data.map(item => {
-            // Process image path
-            let imagePath = item.image || null;
-            if (imagePath && imagePath.startsWith('http')) {
-                const urlObj = new URL(imagePath);
-                imagePath = urlObj.pathname;
-            }
-            if (imagePath && !imagePath.startsWith('/') && !imagePath.startsWith('http')) {
-                imagePath = '/' + imagePath;
-            }
+const itemValues = return_data.map(item => {
+    // Process image path
+    let imagePath = item.image || null;
+    if (imagePath && imagePath.startsWith('http')) {
+        const urlObj = new URL(imagePath);
+        imagePath = urlObj.pathname;
+    }
+    if (imagePath && !imagePath.startsWith('/') && !imagePath.startsWith('http')) {
+        imagePath = '/' + imagePath;
+    }
 
-            // Get packet_barcode from item
-            const packetBarcode = item.packet_barcode || null;
+    // Get packet_barcode from item
+    const packetBarcode = item.packet_barcode || null;
 
-            return [
-                returnId,
-                item.item_id || null,
-                item.product_id || null,
-                item.PCode_BarCode || null,
-                packetBarcode,  // <-- NEW: packet_barcode field
-                item.product_name || null,
-                item.metal_type || null,
-                item.purity || null,
-                item.category || null,
-                item.sub_category || null,
-                item.design_name || null,
-                parseFloat(item.qty) || 0,
-                parseFloat(item.gross_weight) || 0,
-                parseFloat(item.stone_weight) || 0,
-                parseFloat(item.net_weight) || 0,
-                parseFloat(item.rate) || 0,
-                parseFloat(item.making_charges) || 0,
-                parseFloat(item.stone_price) || 0,
-                parseFloat(item.total_price) || 0,
-                imagePath,
-                item.remarks || null,
-                new Date()
-            ];
-        });
+    return [
+        returnId,
+        item.item_id || null,
+        item.product_id || null,
+        item.PCode_BarCode || null,
+        packetBarcode,
+        item.product_name || null,
+        item.metal_type || null,
+        item.purity || null,
+        item.category || null,
+        item.sub_category || null,
+        item.design_name || null,
+        parseFloat(item.qty) || 0,
+        parseFloat(item.gross_weight) || 0,
+        parseFloat(item.cover_wt) || 0,
+        parseFloat(item.card_wt) || 0,
+        parseFloat(item.packing_wt) || 0,
+        parseFloat(item.stone_weight) || 0,
+        parseFloat(item.net_weight) || 0,
+        parseFloat(item.rate) || 0,
+        parseFloat(item.making_charges) || 0,
+        parseFloat(item.stone_price) || 0,
+        parseFloat(item.total_price) || 0,
+        imagePath,
+        item.remarks || null,
+        new Date()
+    ];
+});
 
         db.query(insertItemsSql, [itemValues], (itemsErr) => {
             if (itemsErr) {
@@ -257,35 +263,39 @@ exports.getById = (return_id, callback) => {
         }
 
         // UPDATED: Include packet_barcode in SELECT
-        const itemsSql = `
-            SELECT 
-                item_id,
-                return_id,
-                assigned_item_id,
-                product_id,
-                PCode_BarCode,
-                packet_barcode,
-                product_name,
-                metal_type,
-                purity,
-                category,
-                sub_category,
-                design_name,
-                qty,
-                gross_weight,
-                stone_weight,
-                net_weight,
-                rate,
-                making_charges,
-                stone_price,
-                total_price,
-                image,
-                remarks,
-                created_at
-            FROM return_to_main_stock_items
-            WHERE return_id = ?
-            ORDER BY item_id ASC
-        `;
+        // UPDATED: Include cover_wt, card_wt, packing_wt in SELECT
+const itemsSql = `
+    SELECT 
+        item_id,
+        return_id,
+        assigned_item_id,
+        product_id,
+        PCode_BarCode,
+        packet_barcode,
+        product_name,
+        metal_type,
+        purity,
+        category,
+        sub_category,
+        design_name,
+        qty,
+        gross_weight,
+        cover_wt,
+        card_wt,
+        packing_wt,
+        stone_weight,
+        net_weight,
+        rate,
+        making_charges,
+        stone_price,
+        total_price,
+        image,
+        remarks,
+        created_at
+    FROM return_to_main_stock_items
+    WHERE return_id = ?
+    ORDER BY item_id ASC
+`;
 
         db.query(itemsSql, [return_id], (itemsErr, itemsResults) => {
             if (itemsErr) {

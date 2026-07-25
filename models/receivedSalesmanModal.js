@@ -82,7 +82,7 @@ exports.insert = (
     totalNetWeight += parseFloat(item.net_weight) || 0;
   });
 
-  // Insert main transfer record with capture_image and StockOutWard columns
+  // Insert main transfer record
   const insertTransferSql = `
     INSERT INTO received_salesman_transfers (
       received_number,
@@ -137,6 +137,7 @@ exports.insert = (
 
     const receivedId = transferResult.insertId;
 
+    // Updated INSERT with cover_wt, card_wt, packing_wt fields
     const insertItemsSql = `
       INSERT INTO received_salesman_items (
         received_id,
@@ -151,6 +152,9 @@ exports.insert = (
         design_name,
         qty,
         gross_weight,
+        cover_wt,
+        card_wt,
+        packing_wt,
         stone_weight,
         net_weight,
         rate,
@@ -187,6 +191,9 @@ exports.insert = (
         item.design_name || null,
         parseFloat(item.qty) || 0,
         parseFloat(item.gross_weight) || 0,
+        parseFloat(item.cover_wt) || 0,
+        parseFloat(item.card_wt) || 0,
+        parseFloat(item.packing_wt) || 0,
         parseFloat(item.stone_weight) || 0,
         parseFloat(item.net_weight) || 0,
         parseFloat(item.rate) || 0,
@@ -555,6 +562,7 @@ exports.deleteAssignedRecords = (assignedIds, callback) => {
 };
 
 // Get products assigned to a salesman (from assigned_salesman tables)
+// Get products assigned to a salesman (from assigned_salesman tables)
 exports.getProductsBySalesman = (salesman_id, from_stock_point_id, callback) => {
   // Support old signature (salesman_id, callback) if called elsewhere
   if (typeof from_stock_point_id === 'function') {
@@ -576,6 +584,9 @@ exports.getProductsBySalesman = (salesman_id, from_stock_point_id, callback) => 
       asi.design_name,
       asi.qty,
       asi.gross_weight,
+      asi.cover_wt,
+      asi.card_wt,
+      asi.packing_wt,
       asi.stone_weight,
       asi.net_weight,
       asi.rate,

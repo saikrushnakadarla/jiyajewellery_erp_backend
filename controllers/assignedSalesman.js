@@ -84,7 +84,11 @@ exports.saveAssignedSalesman = (req, res) => {
       created_by,
       from_user_id,
       to_user_id,
-      capture_image  // Capture image from Customer Details
+      capture_image,
+      // NEW: Extract weight totals from request
+      item_gross_total,
+      packet_gross_total,
+      total_weight_with_bag
     } = req.body;
 
     if (!transfer_data || !Array.isArray(transfer_data) || transfer_data.length === 0) {
@@ -133,6 +137,11 @@ exports.saveAssignedSalesman = (req, res) => {
     // Extract product codes from transfer_data for user_id update
     const productCodes = processedTransferData.map(item => item.PCode_BarCode).filter(code => code);
 
+    // Log weight totals
+    console.log(`📦 Item Gross Total: ${item_gross_total || 0}`);
+    console.log(`📦 Packet Gross Total: ${packet_gross_total || 0}`);
+    console.log(`📦 Total Weight with Bag: ${total_weight_with_bag || 0}`);
+
     assignedSalesmanModel.insert(
       processedTransferData,
       from_stock_point_id,
@@ -143,7 +152,10 @@ exports.saveAssignedSalesman = (req, res) => {
       created_by,
       from_user_id,
       to_user_id,
-      savedCaptureImagePath,  // Pass capture image path
+      savedCaptureImagePath,
+      item_gross_total || 0,
+      packet_gross_total || 0,
+      total_weight_with_bag || 0,
       (err, result) => {
         if (err) {
           console.error("Database error:", err);
@@ -163,7 +175,10 @@ exports.saveAssignedSalesman = (req, res) => {
               transfer_id: result.transfer_id,
               transfer_number: result.transfer_number,
               capture_image: savedCaptureImagePath,
-              items_updated: updateResult?.updatedCount || 0
+              items_updated: updateResult?.updatedCount || 0,
+              item_gross_total: item_gross_total || 0,
+              packet_gross_total: packet_gross_total || 0,
+              total_weight_with_bag: total_weight_with_bag || 0
             });
           });
         } else {
@@ -171,7 +186,10 @@ exports.saveAssignedSalesman = (req, res) => {
             message: "Assigned to salesman completed successfully", 
             transfer_id: result.transfer_id,
             transfer_number: result.transfer_number,
-            capture_image: savedCaptureImagePath
+            capture_image: savedCaptureImagePath,
+            item_gross_total: item_gross_total || 0,
+            packet_gross_total: packet_gross_total || 0,
+            total_weight_with_bag: total_weight_with_bag || 0
           });
         }
       }

@@ -11,6 +11,9 @@ exports.insert = (
   from_user_id = null,
   to_user_id = null,
   capture_image = null,
+  item_gross_total = 0,
+  packet_gross_total = 0,
+  total_weight_with_bag = 0,
   callback
 ) => {
   // Handle optional parameters
@@ -19,15 +22,24 @@ exports.insert = (
     from_user_id = null;
     to_user_id = null;
     capture_image = null;
+    item_gross_total = 0;
+    packet_gross_total = 0;
+    total_weight_with_bag = 0;
   }
   if (typeof to_user_id === 'function' && callback) {
     callback = to_user_id;
     to_user_id = null;
     capture_image = null;
+    item_gross_total = 0;
+    packet_gross_total = 0;
+    total_weight_with_bag = 0;
   }
   if (typeof capture_image === 'function' && callback) {
     callback = capture_image;
     capture_image = null;
+    item_gross_total = 0;
+    packet_gross_total = 0;
+    total_weight_with_bag = 0;
   }
 
   if (!Array.isArray(transfer_data) || transfer_data.length === 0) {
@@ -41,14 +53,25 @@ exports.insert = (
   let totalQuantity = 0;
   let totalGrossWeight = 0;
   let totalNetWeight = 0;
+  let totalPackingWt = 0;
 
   transfer_data.forEach(item => {
     totalQuantity += parseFloat(item.qty) || 0;
     totalGrossWeight += parseFloat(item.gross_weight) || 0;
     totalNetWeight += parseFloat(item.net_weight) || 0;
+    totalPackingWt += parseFloat(item.packing_wt) || 0;
   });
 
-  // Insert main transfer record with capture_image column
+  // Calculate packet_gross_total = totalGrossWeight + totalPackingWt
+  const calculatedItemGrossTotal = totalGrossWeight;
+  const calculatedPacketGrossTotal = totalGrossWeight + totalPackingWt;
+
+  // Use provided values or calculated ones
+  const finalItemGrossTotal = item_gross_total || calculatedItemGrossTotal;
+  const finalPacketGrossTotal = packet_gross_total || calculatedPacketGrossTotal;
+  const finalTotalWeightWithBag = total_weight_with_bag || 0;
+
+  // Insert main transfer record with new fields
   const insertTransferSql = `
     INSERT INTO assigned_salesman_transfers (
       assigned_number,
@@ -61,13 +84,16 @@ exports.insert = (
       total_quantity,
       total_gross_weight,
       total_net_weight,
+      item_gross_total,
+      packet_gross_total,
+      total_weight_with_bag,
       status,
       remarks,
       capture_image,
       created_by,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
   `;
 
   const transferParams = [
@@ -81,6 +107,9 @@ exports.insert = (
     totalQuantity,
     totalGrossWeight,
     totalNetWeight,
+    finalItemGrossTotal,
+    finalPacketGrossTotal,
+    finalTotalWeightWithBag,
     'completed',
     remarks || null,
     capture_image || null,
@@ -95,7 +124,6 @@ exports.insert = (
 
     const assignedId = transferResult.insertId;
 
-    // Updated INSERT with cover_wt, card_wt, packing_wt fields
     const insertItemsSql = `
       INSERT INTO assigned_salesman_items (
         assigned_id,
@@ -124,26 +152,51 @@ exports.insert = (
       ) VALUES ?
     `;
 
-    const itemValues = transfer_data.map(item => {
-      let imagePath = item.image || null;
-      if (imagePath && imagePath.startsWith('http')) {
-        const urlObj = new URL(imagePath);
-        imagePath = urlObj.pathname;
-      }
-      if (imagePath && !imagePath.startsWith('/') && !imagePath.startsWith('http')) {
-        imagePath = '/' + imagePath;
-      }
+    // Build item values with proper type checking
+    const itemValues = transfer_data.map((item, index) => {
+      // Debug: log the item to see what's being passed
+      console.log(`📦 Processing item ${index}:`, JSON.stringify(item, null, 2));
       
-      return [
+      // Handle image path - ensure it's a string or null
+      let imagePath = null;
+      
+      // Check if item.image exists and is a string
+      if (item.image !== undefined && item.image !== null) {
+        if (typeof item.image === 'string') {
+          imagePath = item.image;
+          
+          // If it's a full URL, extract the path
+          if (imagePath.startsWith('http')) {
+            try {
+              const urlObj = new URL(imagePath);
+              imagePath = urlObj.pathname;
+            } catch (e) {
+              // If URL parsing fails, keep as is
+            }
+          }
+          
+          // Ensure it starts with '/'
+          if (imagePath && !imagePath.startsWith('/') && !imagePath.startsWith('http')) {
+            imagePath = '/' + imagePath;
+          }
+        } else {
+          // If it's not a string, set to null
+          console.log(`⚠️ Item ${index} image is not a string:`, typeof item.image);
+          imagePath = null;
+        }
+      }
+
+      // Build the row values with proper type checking
+      const row = [
         assignedId,
-        item.product_id || null,
-        item.PCode_BarCode || null,
-        item.product_name || null,
-        item.metal_type || null,
-        item.purity || null,
-        item.category || null,
-        item.sub_category || null,
-        item.design_name || null,
+        item.product_id !== undefined && item.product_id !== null ? String(item.product_id) : null,
+        item.PCode_BarCode !== undefined && item.PCode_BarCode !== null ? String(item.PCode_BarCode) : null,
+        item.product_name !== undefined && item.product_name !== null ? String(item.product_name) : null,
+        item.metal_type !== undefined && item.metal_type !== null ? String(item.metal_type) : null,
+        item.purity !== undefined && item.purity !== null ? String(item.purity) : null,
+        item.category !== undefined && item.category !== null ? String(item.category) : null,
+        item.sub_category !== undefined && item.sub_category !== null ? String(item.sub_category) : null,
+        item.design_name !== undefined && item.design_name !== null ? String(item.design_name) : null,
         parseFloat(item.qty) || 0,
         parseFloat(item.gross_weight) || 0,
         parseFloat(item.cover_wt) || 0,
@@ -156,10 +209,19 @@ exports.insert = (
         parseFloat(item.stone_price) || 0,
         parseFloat(item.total_price) || 0,
         imagePath,
-        item.remarks || null,
+        item.remarks !== undefined && item.remarks !== null ? String(item.remarks) : null,
         new Date()
       ];
+
+      // Debug: log the row to see what's being inserted
+      console.log(`📦 Row ${index} image value:`, imagePath);
+
+      return row;
     });
+
+    // Debug: log the entire itemValues array
+    console.log(`📦 Total items to insert: ${itemValues.length}`);
+    console.log(`📦 First item values:`, itemValues[0]);
 
     db.query(insertItemsSql, [itemValues], (itemsErr) => {
       if (itemsErr) {
@@ -169,11 +231,13 @@ exports.insert = (
       
       console.log(`✅ Assignment ${assigned_number} saved with ${itemValues.length} items.`);
       console.log(`📷 Capture image: ${capture_image || 'None'}`);
+      console.log(`📦 Item Gross Total: ${finalItemGrossTotal}`);
+      console.log(`📦 Packet Gross Total: ${finalPacketGrossTotal}`);
+      console.log(`📦 Total Weight with Bag: ${finalTotalWeightWithBag}`);
       callback(null, { transfer_id: assignedId, transfer_number: assigned_number });
     });
   });
 };
-
 
 // FIXED: Only update user_id, NOT Stock_Point
 exports.updateStockPointForSalesman = (productCodes, salesmanId, callback) => {
@@ -233,6 +297,9 @@ exports.getAll = (callback) => {
       ast.total_quantity,
       ast.total_gross_weight,
       ast.total_net_weight,
+      ast.item_gross_total,
+      ast.packet_gross_total,
+      ast.total_weight_with_bag,
       ast.status,
       ast.remarks,
       ast.capture_image,
@@ -264,6 +331,9 @@ exports.getById = (assigned_id, callback) => {
       ast.total_quantity,
       ast.total_gross_weight,
       ast.total_net_weight,
+      ast.item_gross_total,
+      ast.packet_gross_total,
+      ast.total_weight_with_bag,
       ast.status,
       ast.remarks,
       ast.capture_image,
@@ -391,6 +461,9 @@ exports.getByDateRange = (start_date, end_date, callback) => {
       ast.total_quantity,
       ast.total_gross_weight,
       ast.total_net_weight,
+      ast.item_gross_total,
+      ast.packet_gross_total,
+      ast.total_weight_with_bag,
       ast.status,
       ast.remarks,
       ast.capture_image,
@@ -422,6 +495,9 @@ exports.getByStatus = (status, callback) => {
       ast.total_quantity,
       ast.total_gross_weight,
       ast.total_net_weight,
+      ast.item_gross_total,
+      ast.packet_gross_total,
+      ast.total_weight_with_bag,
       ast.status,
       ast.remarks,
       ast.capture_image,
@@ -454,6 +530,9 @@ exports.getProductsBySalesman = (salesman_id, callback) => {
       asi.design_name,
       asi.qty,
       asi.gross_weight,
+      asi.cover_wt,
+      asi.card_wt,
+      asi.packing_wt,
       asi.stone_weight,
       asi.net_weight,
       asi.rate,

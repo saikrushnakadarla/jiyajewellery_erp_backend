@@ -2,7 +2,44 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const nodemailer = require('nodemailer');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, '../uploads/salesman-photos');
+    // Create directory if it doesn't exist
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    cb(null, `salesman-${uniqueSuffix}${ext}`);
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    if (extname && mimetype) {
+      return cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  }
+});
 
 // Configure nodemailer
 const transporter = nodemailer.createTransport({
@@ -69,43 +106,116 @@ async function getCustomerEmail(customerAccountId) {
   }
 }
 
-// Helper function to get salesman email from account_details table with case-insensitive check
-async function getSalesmanEmail(salesmanId) {
-  try {
-    const result = await queryAsync(
-      `SELECT email, account_group FROM account_details 
-       WHERE account_id = ? AND UPPER(TRIM(account_group)) = 'SALESMAN'`,
-      [salesmanId]
-    );
-
-    if (result.length === 0) {
-      console.log(`⚠️ No account_details row matched account_id ${salesmanId} with account_group = SALESMAN (check case/whitespace/account_id value)`);
-      return null;
-    }
-
-    if (!result[0].email) {
-      console.log(`⚠️ Salesman account_id ${salesmanId} found but 'email' column is empty in account_details`);
-      return null;
-    }
-
-    console.log(`✅ Salesman email from account_details (account_id ${salesmanId}): ${result[0].email}`);
-    return result[0].email;
-  } catch (error) {
-    console.error('❌ Error getting salesman email:', error);
-    return null;
+// Helper function to get full image URL
+function getFullImageUrl(photoPath) {
+  if (!photoPath) return null;
+  
+  // If already a full URL, return as is
+  if (photoPath.startsWith('http://') || photoPath.startsWith('https://')) {
+    return photoPath;
   }
+  
+  // Get base URL from environment variable or use default
+  const baseUrl = process.env.BASE_URL || process.env.APP_URL || 'http://localhost:5001';
+  
+  // Ensure the path starts with /
+  const normalizedPath = photoPath.startsWith('/') ? photoPath : `/${photoPath}`;
+  
+  return `${baseUrl}${normalizedPath}`;
 }
 
-// Helper function to send email
-// Helper function to send email - UPDATED VERSION
+// Helper function to send email with photo (FIXED - using inline attachment for better compatibility)
 async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, data) {
   try {
-    const { customerName, warehouseName, barcode, productName, scheduledDate, scheduledTime, salesmanName, customerId } = data;
+    const { 
+      customerName, 
+      warehouseName, 
+      barcode, 
+      productName, 
+      scheduledDate, 
+      scheduledTime, 
+      salesmanName, 
+      customerId,
+      salesmanPhoto 
+    } = data;
     
     let subject, html;
+    let attachments = [];
+    
+    // Process photo if exists - use inline attachment for better email compatibility
+    let photoHtml = '';
+    let photoCid = '';
+    
+    if (salesmanPhoto) {
+      try {
+        // Get the full path to the photo file
+        const photoPath = path.join(__dirname, '..', salesmanPhoto);
+        
+        // Check if file exists
+        if (fs.existsSync(photoPath)) {
+          // Generate a unique Content-ID for the image
+          photoCid = `salesman_photo_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+          
+          // Read the file as base64
+          const imageBuffer = fs.readFileSync(photoPath);
+          const base64Image = imageBuffer.toString('base64');
+          
+          // Get the file extension
+          const ext = path.extname(photoPath).toLowerCase().replace('.', '');
+          const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 
+                          ext === 'png' ? 'image/png' : 
+                          ext === 'gif' ? 'image/gif' : 'image/jpeg';
+          
+          // Add as attachment with Content-ID
+          attachments.push({
+            filename: path.basename(photoPath),
+            content: imageBuffer,
+            cid: photoCid,
+            contentType: mimeType
+          });
+          
+          // Build photo HTML using the CID
+          photoHtml = `
+            <div style="text-align: center; margin: 15px 0;">
+              <img src="cid:${photoCid}" alt="${salesmanName || 'Salesperson'}" 
+                   style="max-width: 200px; max-height: 200px; border-radius: 50%; border: 3px solid #4F46E5; object-fit: cover;" />
+              <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">Your Salesperson</p>
+            </div>
+          `;
+          console.log(`✅ Photo attached as inline image with CID: ${photoCid}`);
+        } else {
+          console.log(`⚠️ Photo file not found at: ${photoPath}`);
+          // Fallback to URL method
+          const fullUrl = getFullImageUrl(salesmanPhoto);
+          if (fullUrl) {
+            photoHtml = `
+              <div style="text-align: center; margin: 15px 0;">
+                <img src="${fullUrl}" alt="${salesmanName || 'Salesperson'}" 
+                     style="max-width: 200px; max-height: 200px; border-radius: 50%; border: 3px solid #4F46E5; object-fit: cover;" />
+                <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">Your Salesperson</p>
+              </div>
+            `;
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error processing photo for email:', error);
+        // Try URL fallback
+        const fullUrl = getFullImageUrl(salesmanPhoto);
+        if (fullUrl) {
+          photoHtml = `
+            <div style="text-align: center; margin: 15px 0;">
+              <img src="${fullUrl}" alt="${salesmanName || 'Salesperson'}" 
+                   style="max-width: 200px; max-height: 200px; border-radius: 50%; border: 3px solid #4F46E5; object-fit: cover;" />
+              <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">Your Salesperson</p>
+            </div>
+          `;
+        }
+      }
+    }
     
     if (emailType === 'customer') {
       subject = '📦 Warehouse Visit Scheduled - Jiyaa Jewels';
+      
       html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background: #ffffff;">
           <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #f0f0f0;">
@@ -120,15 +230,13 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
               A Sales visit has been scheduled for you. Please find the details below:
             </p>
             
+            ${photoHtml}
+            
             <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
               <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
                 <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555; width: 40%;">Salesman Name</td>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555; width: 40%;">Salesperson Name</td>
                   <td style="padding: 8px 10px; color: #333;">${salesmanName || 'Not assigned yet'}</td>
-                </tr>
-                <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Salesman ID</td>
-                  <td style="padding: 8px 10px; color: #333;">${customerId || 'N/A'}</td>
                 </tr>
                 <tr>
                   <td style="padding: 8px 10px; font-weight: bold; color: #555;">Date</td>
@@ -137,6 +245,18 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
                 <tr>
                   <td style="padding: 8px 10px; font-weight: bold; color: #555;">Time</td>
                   <td style="padding: 8px 10px; color: #333;">${scheduledTime || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Warehouse</td>
+                  <td style="padding: 8px 10px; color: #333;">${warehouseName || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Barcode</td>
+                  <td style="padding: 8px 10px; color: #333; font-family: monospace;">${barcode || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Product</td>
+                  <td style="padding: 8px 10px; color: #333;">${productName || 'N/A'}</td>
                 </tr>
               </table>
             </div>
@@ -178,12 +298,16 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
             <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
               <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
                 <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555; width: 40%;">Salesman Name</td>
-                  <td style="padding: 8px 10px; color: #333;">${salesmanName || 'Not assigned yet'}</td>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555; width: 40%;">Customer</td>
+                  <td style="padding: 8px 10px; color: #333;">${customerName || 'N/A'}</td>
                 </tr>
                 <tr>
-                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Salesman ID</td>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Customer ID</td>
                   <td style="padding: 8px 10px; color: #333;">${customerId || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Warehouse</td>
+                  <td style="padding: 8px 10px; color: #333;">${warehouseName || 'N/A'}</td>
                 </tr>
                 <tr>
                   <td style="padding: 8px 10px; font-weight: bold; color: #555;">Date</td>
@@ -192,6 +316,10 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
                 <tr>
                   <td style="padding: 8px 10px; font-weight: bold; color: #555;">Time</td>
                   <td style="padding: 8px 10px; color: #333;">${scheduledTime || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Barcode</td>
+                  <td style="padding: 8px 10px; color: #333; font-family: monospace;">${barcode || 'N/A'}</td>
                 </tr>
               </table>
             </div>
@@ -215,12 +343,19 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
       `;
     }
     
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
+    const mailOptions = {
+      from: process.env.EMAIL_USER || "tharunkumarreddy1212@gmail.com",
       to: recipientEmail,
       subject: subject,
       html: html
-    });
+    };
+    
+    // Add attachments if any
+    if (attachments.length > 0) {
+      mailOptions.attachments = attachments;
+    }
+    
+    await transporter.sendMail(mailOptions);
     
     console.log(`✅ Email sent to ${recipientEmail} (${emailType})`);
     return true;
@@ -231,8 +366,16 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
 }
 
 // Helper function to create notification and send email for customer
-// Helper function to create notification and send email for customer
-async function createWarehouseScheduleNotification(customerAccountId, warehouseId, barcode, scheduledDate, salesmanId, salesmanName, barcodeDetails) {
+async function createWarehouseScheduleNotification(
+  customerAccountId, 
+  warehouseId, 
+  barcode, 
+  scheduledDate, 
+  salesmanId, 
+  salesmanName, 
+  barcodeDetails,
+  salesmanPhoto
+) {
   try {
     // Get customer details from account_details
     const customer = await queryAsync(
@@ -281,7 +424,8 @@ async function createWarehouseScheduleNotification(customerAccountId, warehouseI
           scheduledDate: formattedDate,
           scheduledTime: formattedTime,
           salesmanName: salesmanName || 'Not assigned yet',
-          customerId: salesmanId || 'N/A'
+          customerId,
+          salesmanPhoto: salesmanPhoto || null
         }
       );
     } else {
@@ -303,7 +447,7 @@ async function createWarehouseScheduleNotification(customerAccountId, warehouseI
     
     console.log(`✅ Warehouse schedule notification sent to customer ${customerAccountId}`);
     
-    // Send notification and email to salesman if assigned
+    // Send notification to salesman if assigned
     if (salesmanId) {
       // Get salesman email from account_details
       // const salesmanEmail = await getSalesmanEmail(salesmanId);
@@ -343,7 +487,7 @@ async function createWarehouseScheduleNotification(customerAccountId, warehouseI
       console.log(`✅ Warehouse schedule notification sent to salesman ${salesmanId}`);
     }
     
-    // NEW: Create notification for warehouse (NO EMAIL)
+    // Create notification for warehouse (NO EMAIL)
     const warehouseTitle = '📦 New Customer Visit Scheduled';
     const warehouseMessage = `A new customer visit has been scheduled at your warehouse.
       Customer: ${customerName} (${customerId})
@@ -441,10 +585,11 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST - Create new warehouse visit schedule with multiple barcodes
-router.post('/', async (req, res) => {
+// POST - Create new warehouse visit schedule with multiple barcodes and photo
+router.post('/', upload.single('salesman_photo'), async (req, res) => {
   try {
     const { customer_id, warehouse_id, barcodes, scheduled_date, salesman_id, salesman_name } = req.body;
+    const salesmanPhoto = req.file ? `/uploads/salesman-photos/${req.file.filename}` : null;
     
     console.log('📝 Received data:', { 
       customer_id, 
@@ -453,11 +598,15 @@ router.post('/', async (req, res) => {
       scheduled_date,
       salesman_id,
       salesman_name,
-      barcode_count: barcodes ? barcodes.length : 0
+      salesmanPhoto,
+      barcode_count: barcodes ? JSON.parse(barcodes).length : 0
     });
     
+    // Parse barcodes from JSON string
+    const parsedBarcodes = barcodes ? JSON.parse(barcodes) : [];
+    
     // Validate required fields
-    if (!customer_id || !warehouse_id || !barcodes || !barcodes.length || !scheduled_date) {
+    if (!customer_id || !warehouse_id || !parsedBarcodes || !parsedBarcodes.length || !scheduled_date) {
       console.log('❌ Missing required fields');
       return res.status(400).json({ 
         success: false, 
@@ -557,7 +706,7 @@ router.post('/', async (req, res) => {
     const invalidBarcodes = [];
     const barcodeDetails = [];
     
-    for (const barcode of barcodes) {
+    for (const barcode of parsedBarcodes) {
       console.log(`🔍 Checking barcode "${barcode}" for warehouse ${warehouseIdInt}`);
       try {
         const barcodeExists = await queryAsync(`
@@ -626,21 +775,21 @@ router.post('/', async (req, res) => {
     
     console.log('✅ No duplicates found');
     
-    // Step 6: Insert schedules for each barcode with salesman info
+    // Step 6: Insert schedules for each barcode with salesman info and photo
     const insertedIds = [];
     for (const barcode of validBarcodes) {
       console.log(`📝 Inserting schedule for barcode: ${barcode}...`);
       
       const result = await queryAsync(
         `INSERT INTO visit_logs_warehouse_schedule 
-         (customer_account_id, customer_id, warehouse_id, barcode, scheduled_date, salesman_id, salesman_name) 
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date, salesmanIdInt, finalSalesmanName]
+         (customer_account_id, customer_id, warehouse_id, barcode, scheduled_date, salesman_id, salesman_name, salesman_photo) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date, salesmanIdInt, finalSalesmanName, salesmanPhoto]
       );
       insertedIds.push(result.insertId);
       console.log(`✅ Schedule inserted with ID: ${result.insertId} (customer_id: ${actualCustomerId}, salesman: ${finalSalesmanName || 'Not assigned'})`);
       
-      // Send notification and email for each barcode (warehouse gets only notification)
+      // Send notification and email for each barcode
       const barcodeDetail = barcodeDetails.find(b => b.PCode_BarCode === barcode);
       await createWarehouseScheduleNotification(
         customerIdInt, 
@@ -649,7 +798,8 @@ router.post('/', async (req, res) => {
         scheduled_date, 
         salesmanIdInt, 
         finalSalesmanName,
-        barcodeDetail ? [barcodeDetail] : []
+        barcodeDetail ? [barcodeDetail] : [],
+        salesmanPhoto
       );
     }
     
@@ -668,8 +818,18 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Helper function for update notification (warehouse gets only notification, no email)
-async function createWarehouseScheduleUpdateNotification(customerAccountId, warehouseId, barcode, scheduledDate, salesmanId, salesmanName, oldSchedule, barcodeDetails) {
+// Helper function for update notification with photo
+async function createWarehouseScheduleUpdateNotification(
+  customerAccountId, 
+  warehouseId, 
+  barcode, 
+  scheduledDate, 
+  salesmanId, 
+  salesmanName, 
+  oldSchedule, 
+  barcodeDetails,
+  salesmanPhoto
+) {
   try {
     // Get customer details
     const customer = await queryAsync(
@@ -718,7 +878,8 @@ async function createWarehouseScheduleUpdateNotification(customerAccountId, ware
           scheduledDate: formattedDate,
           scheduledTime: formattedTime,
           salesmanName: salesmanName || 'Not assigned yet',
-          customerId
+          customerId,
+          salesmanPhoto: salesmanPhoto || null
         }
       );
     }
@@ -737,7 +898,7 @@ async function createWarehouseScheduleUpdateNotification(customerAccountId, ware
     
     console.log(`✅ Warehouse schedule update notification sent to customer ${customerAccountId}`);
     
-    // Send notification and email to salesman if assigned
+    // Send notification to salesman if assigned
     if (salesmanId) {
       // // Get salesman email from account_details
       // const salesmanEmail = await getSalesmanEmail(salesmanId);
@@ -777,7 +938,7 @@ async function createWarehouseScheduleUpdateNotification(customerAccountId, ware
       console.log(`✅ Warehouse schedule update notification sent to salesman ${salesmanId}`);
     }
     
-    // NEW: Create update notification for warehouse (NO EMAIL)
+    // Create update notification for warehouse (NO EMAIL)
     const warehouseTitle = '📦 Warehouse Visit Updated';
     const warehouseMessage = `A warehouse visit has been updated.
       Customer: ${customerName} (${customerId})
@@ -797,16 +958,29 @@ async function createWarehouseScheduleUpdateNotification(customerAccountId, ware
   }
 }
 
-// PUT - Update warehouse visit schedule
-router.put('/:id', async (req, res) => {
+// PUT - Update warehouse visit schedule with photo
+router.put('/:id', upload.single('salesman_photo'), async (req, res) => {
   try {
     const { id } = req.params;
     const { customer_id, warehouse_id, barcodes, scheduled_date, status, salesman_id, salesman_name } = req.body;
+    const salesmanPhoto = req.file ? `/uploads/salesman-photos/${req.file.filename}` : null;
     
-    console.log(`📝 Updating schedule ${id}:`, { customer_id, warehouse_id, barcodes, scheduled_date, status, salesman_id, salesman_name });
+    console.log(`📝 Updating schedule ${id}:`, { 
+      customer_id, 
+      warehouse_id, 
+      barcodes, 
+      scheduled_date, 
+      status, 
+      salesman_id, 
+      salesman_name,
+      salesmanPhoto 
+    });
+    
+    // Parse barcodes from JSON string if present
+    const parsedBarcodes = barcodes ? JSON.parse(barcodes) : [];
     
     // Validate required fields
-    if (!customer_id || !warehouse_id || !barcodes || !barcodes.length || !scheduled_date) {
+    if (!customer_id || !warehouse_id || !parsedBarcodes || !parsedBarcodes.length || !scheduled_date) {
       return res.status(400).json({ 
         success: false, 
         message: 'All fields are required' 
@@ -841,6 +1015,18 @@ router.put('/:id', async (req, res) => {
     
     const oldSchedule = existing[0];
     console.log(`✅ Schedule ${id} found`);
+    
+    // If new photo uploaded, delete old photo
+    if (salesmanPhoto && oldSchedule.salesman_photo) {
+      const oldPhotoPath = path.join(__dirname, '..', oldSchedule.salesman_photo);
+      if (fs.existsSync(oldPhotoPath)) {
+        fs.unlinkSync(oldPhotoPath);
+        console.log(`🗑️ Deleted old photo: ${oldSchedule.salesman_photo}`);
+      }
+    }
+    
+    // Use existing photo if no new photo uploaded
+    const finalSalesmanPhoto = salesmanPhoto || oldSchedule.salesman_photo;
     
     // Validate customer exists in account_details
     const customer = await queryAsync(
@@ -903,7 +1089,7 @@ router.put('/:id', async (req, res) => {
       FROM stock_transfer_items sti
       WHERE sti.PCode_BarCode = ?
       LIMIT 1
-    `, [barcodes[0]]);
+    `, [parsedBarcodes[0]]);
     
     // Delete existing schedule
     await queryAsync(
@@ -911,18 +1097,18 @@ router.put('/:id', async (req, res) => {
       [id]
     );
     
-    // Insert new schedules for each barcode with salesman info
+    // Insert new schedules for each barcode with salesman info and photo
     const insertedIds = [];
-    for (const barcode of barcodes) {
+    for (const barcode of parsedBarcodes) {
       const result = await queryAsync(
         `INSERT INTO visit_logs_warehouse_schedule 
-         (customer_account_id, customer_id, warehouse_id, barcode, scheduled_date, status, salesman_id, salesman_name) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date, status || 'scheduled', salesmanIdInt, finalSalesmanName]
+         (customer_account_id, customer_id, warehouse_id, barcode, scheduled_date, status, salesman_id, salesman_name, salesman_photo) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date, status || 'scheduled', salesmanIdInt, finalSalesmanName, finalSalesmanPhoto]
       );
       insertedIds.push(result.insertId);
       
-      // Send update notification and email for each barcode
+      // Send update notification for each barcode
       await createWarehouseScheduleUpdateNotification(
         customerIdInt,
         warehouseIdInt,
@@ -931,7 +1117,8 @@ router.put('/:id', async (req, res) => {
         salesmanIdInt,
         finalSalesmanName,
         oldSchedule,
-        barcodeDetail
+        barcodeDetail,
+        finalSalesmanPhoto
       );
     }
     
@@ -948,10 +1135,10 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Helper function for deletion notification with email
+// Helper function for deletion notification with photo
 async function createWarehouseScheduleDeletionNotification(scheduleData) {
   try {
-    const { customer_account_id, warehouse_id, barcode, scheduled_date, salesman_id, salesman_name } = scheduleData;
+    const { customer_account_id, warehouse_id, barcode, scheduled_date, salesman_id, salesman_name, salesman_photo } = scheduleData;
     
     // Get customer details
     const customer = await queryAsync(
@@ -1046,7 +1233,7 @@ async function createWarehouseScheduleDeletionNotification(scheduleData) {
     
     console.log(`✅ Warehouse schedule deletion notification sent to customer ${customer_account_id}`);
     
-    // Send notification and email to salesman if assigned
+    // Send notification to salesman if assigned
     if (salesman_id) {
       // Get salesman email from account_details
       const salesmanEmail = await getSalesmanEmail(salesman_id);
@@ -1110,7 +1297,7 @@ async function createWarehouseScheduleDeletionNotification(scheduleData) {
       console.log(`✅ Warehouse schedule deletion notification sent to salesman ${salesman_id}`);
     }
     
-    // NEW: Create deletion notification for warehouse (NO EMAIL)
+    // Create deletion notification for warehouse (NO EMAIL)
     const warehouseTitle = '❌ Customer Visit Cancelled';
     const warehouseMessage = `A customer visit at your warehouse has been cancelled.
       Customer: ${customerName} (${customerId})
@@ -1151,7 +1338,16 @@ router.delete('/:id', async (req, res) => {
     
     const scheduleData = schedule[0];
     
-    // Send deletion notifications (warehouse gets only notification)
+    // Delete photo file if exists
+    if (scheduleData.salesman_photo) {
+      const photoPath = path.join(__dirname, '..', scheduleData.salesman_photo);
+      if (fs.existsSync(photoPath)) {
+        fs.unlinkSync(photoPath);
+        console.log(`🗑️ Deleted photo: ${scheduleData.salesman_photo}`);
+      }
+    }
+    
+    // Send deletion notifications
     await createWarehouseScheduleDeletionNotification(scheduleData);
     
     const result = await queryAsync(
@@ -1256,7 +1452,15 @@ router.get('/customer/:customerId', async (req, res) => {
 // Helper function for status change notification (warehouse gets only notification, no email)
 async function createWarehouseScheduleStatusNotification(scheduleData, newStatus) {
   try {
-    const { customer_account_id, warehouse_id, barcode, scheduled_date, salesman_id, salesman_name } = scheduleData;
+    const { 
+      customer_account_id, 
+      warehouse_id, 
+      barcode, 
+      scheduled_date, 
+      salesman_id, 
+      salesman_name,
+      salesman_photo 
+    } = scheduleData;
     
     // Get customer details
     const customer = await queryAsync(
@@ -1394,7 +1598,7 @@ async function createWarehouseScheduleStatusNotification(scheduleData, newStatus
     
     console.log(`✅ Warehouse schedule status notification sent to customer ${customer_account_id}`);
     
-    // Send notification and email to salesman if assigned
+    // Send notification to salesman if assigned
     if (salesman_id) {
       // Get salesman email from account_details
       const salesmanEmail = await getSalesmanEmail(salesman_id);
@@ -1460,7 +1664,7 @@ async function createWarehouseScheduleStatusNotification(scheduleData, newStatus
       console.log(`✅ Warehouse schedule status notification sent to salesman ${salesman_id}`);
     }
     
-    // NEW: Create status notification for warehouse (NO EMAIL)
+    // Create status notification for warehouse (NO EMAIL)
     const warehouseTitle = newStatus === 'completed' 
       ? '✅ Customer Visit Completed' 
       : '❌ Customer Visit Cancelled';
@@ -1600,10 +1804,10 @@ router.get('/account-details', async (req, res) => {
   }
 });
 
-// Helper function for salesman assignment notification (warehouse gets only notification, no email)
+// Helper function for salesman assignment notification with photo
 async function createSalesmanAssignmentNotification(scheduleData, salesmanId, salesmanName) {
   try {
-    const { customer_account_id, warehouse_id, barcode, scheduled_date } = scheduleData;
+    const { customer_account_id, warehouse_id, barcode, scheduled_date, salesman_photo } = scheduleData;
     
     // Get customer details
     const customer = await queryAsync(
@@ -1637,6 +1841,64 @@ async function createSalesmanAssignmentNotification(scheduleData, salesmanId, sa
     // Get customer email from users table
     const customerEmail = await getCustomerEmail(customer_account_id);
     
+    // Build photo HTML if exists - using inline attachment approach
+    let photoHtml = '';
+    let attachments = [];
+    let photoCid = '';
+    
+    if (salesman_photo) {
+      try {
+        const photoPath = path.join(__dirname, '..', salesman_photo);
+        if (fs.existsSync(photoPath)) {
+          photoCid = `salesman_photo_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+          const imageBuffer = fs.readFileSync(photoPath);
+          const ext = path.extname(photoPath).toLowerCase().replace('.', '');
+          const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 
+                          ext === 'png' ? 'image/png' : 
+                          ext === 'gif' ? 'image/gif' : 'image/jpeg';
+          
+          attachments.push({
+            filename: path.basename(photoPath),
+            content: imageBuffer,
+            cid: photoCid,
+            contentType: mimeType
+          });
+          
+          photoHtml = `
+            <div style="text-align: center; margin: 15px 0;">
+              <img src="cid:${photoCid}" alt="${salesmanName}" 
+                   style="max-width: 150px; max-height: 150px; border-radius: 50%; border: 3px solid #4F46E5; object-fit: cover;" />
+              <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">Your Salesperson</p>
+            </div>
+          `;
+        } else {
+          // Fallback to URL
+          const fullUrl = getFullImageUrl(salesman_photo);
+          if (fullUrl) {
+            photoHtml = `
+              <div style="text-align: center; margin: 15px 0;">
+                <img src="${fullUrl}" alt="${salesmanName}" 
+                     style="max-width: 150px; max-height: 150px; border-radius: 50%; border: 3px solid #4F46E5; object-fit: cover;" />
+                <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">Your Salesperson</p>
+              </div>
+            `;
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error processing photo for assignment email:', error);
+        const fullUrl = getFullImageUrl(salesman_photo);
+        if (fullUrl) {
+          photoHtml = `
+            <div style="text-align: center; margin: 15px 0;">
+              <img src="${fullUrl}" alt="${salesmanName}" 
+                   style="max-width: 150px; max-height: 150px; border-radius: 50%; border: 3px solid #4F46E5; object-fit: cover;" />
+              <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">Your Salesperson</p>
+            </div>
+          `;
+        }
+      }
+    }
+    
     // Send email to customer if email exists
     if (customerEmail) {
       const subject = '👤 Salesperson Assigned - Jiyaa Jewels';
@@ -1653,6 +1915,8 @@ async function createSalesmanAssignmentNotification(scheduleData, salesmanId, sa
             <p style="font-size: 15px; color: #444; line-height: 1.6;">
               <strong>${salesmanName}</strong> has been assigned as your salesperson for your warehouse visit.
             </p>
+            
+            ${photoHtml}
             
             <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0;">
               <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
@@ -1690,12 +1954,18 @@ async function createSalesmanAssignmentNotification(scheduleData, salesmanId, sa
         </div>
       `;
       
-      await transporter.sendMail({
+      const mailOptions = {
         from: process.env.EMAIL_USER,
         to: customerEmail,
         subject: subject,
         html: html
-      });
+      };
+      
+      if (attachments.length > 0) {
+        mailOptions.attachments = attachments;
+      }
+      
+      await transporter.sendMail(mailOptions);
       
       console.log(`✅ Salesman assignment email sent to customer ${customerEmail}`);
     }

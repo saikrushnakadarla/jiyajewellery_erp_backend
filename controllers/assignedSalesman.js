@@ -72,6 +72,7 @@ const generateAssignedNumber = () => {
   return `ASN${year}${month}${day}${random}`;
 };
 
+
 exports.saveAssignedSalesman = (req, res) => {
   try {
     const { 
@@ -85,7 +86,6 @@ exports.saveAssignedSalesman = (req, res) => {
       from_user_id,
       to_user_id,
       capture_image,
-      // NEW: Extract weight totals from request
       item_gross_total,
       packet_gross_total,
       total_weight_with_bag
@@ -103,44 +103,23 @@ exports.saveAssignedSalesman = (req, res) => {
       return res.status(400).json({ message: "To salesman is required" });
     }
 
-    // Determine assigned number
     const assigned_number = reference_number || generateAssignedNumber();
     console.log(`📦 Processing assignment: ${assigned_number}`);
 
-    // --- Process capture image (single image for the whole assignment) ---
     let savedCaptureImagePath = null;
     if (capture_image) {
-      console.log(`📷 Saving capture image for assignment ${assigned_number}...`);
-      console.log(`📷 Capture image type: ${typeof capture_image}, length: ${capture_image ? capture_image.length : 0}`);
       savedCaptureImagePath = saveImageFile(capture_image, assigned_number, 'capture');
-      console.log(`📷 Capture image saved at: ${savedCaptureImagePath}`);
-    } else {
-      console.log(`📷 No capture image provided`);
     }
 
-    // --- Process images for each item: convert base64 to file paths ---
+    // Process images for items
     const processedTransferData = transfer_data.map((item, index) => {
       const processedItem = { ...item };
-
-      // If item has its own image
       if (item.image) {
-        console.log(`🖼️ Item ${index} has image, saving...`);
         const savedPath = saveImageFile(item.image, assigned_number, 'item', index);
         processedItem.image = savedPath;
-      } else {
-        console.log(`🖼️ Item ${index} has no image`);
       }
-
       return processedItem;
     });
-
-    // Extract product codes from transfer_data for user_id update
-    const productCodes = processedTransferData.map(item => item.PCode_BarCode).filter(code => code);
-
-    // Log weight totals
-    console.log(`📦 Item Gross Total: ${item_gross_total || 0}`);
-    console.log(`📦 Packet Gross Total: ${packet_gross_total || 0}`);
-    console.log(`📦 Total Weight with Bag: ${total_weight_with_bag || 0}`);
 
     assignedSalesmanModel.insert(
       processedTransferData,
@@ -162,44 +141,200 @@ exports.saveAssignedSalesman = (req, res) => {
           return res.status(500).json({ message: "Error saving assigned salesman data", error: err });
         }
         
-        // After successful transfer, update user_id in opening_tags_entry
-        if (productCodes.length > 0 && to_salesman_id) {
-          assignedSalesmanModel.updateStockPointForSalesman(productCodes, to_salesman_id, (updateErr, updateResult) => {
-            if (updateErr) {
-              console.error("Error updating user_id for salesman:", updateErr);
-            }
-            console.log(`Updated user_id for ${updateResult?.updatedCount || 0} products (Stock_Point unchanged)`);
-            
-            res.json({ 
-              message: "Assigned to salesman completed successfully", 
-              transfer_id: result.transfer_id,
-              transfer_number: result.transfer_number,
-              capture_image: savedCaptureImagePath,
-              items_updated: updateResult?.updatedCount || 0,
-              item_gross_total: item_gross_total || 0,
-              packet_gross_total: packet_gross_total || 0,
-              total_weight_with_bag: total_weight_with_bag || 0
-            });
-          });
-        } else {
-          res.json({ 
-            message: "Assigned to salesman completed successfully", 
-            transfer_id: result.transfer_id,
-            transfer_number: result.transfer_number,
-            capture_image: savedCaptureImagePath,
-            item_gross_total: item_gross_total || 0,
-            packet_gross_total: packet_gross_total || 0,
-            total_weight_with_bag: total_weight_with_bag || 0
-          });
+        // Send notification to salesman about pending assignment
+        if (to_salesman_id) {
+          createSalesmanAssignmentNotification(
+            to_salesman_id,
+            assigned_number,
+            processedTransferData,
+            from_stock_point_id
+          );
         }
+        
+        res.json({ 
+          message: "Assignment created successfully. Waiting for salesman approval.", 
+          transfer_id: result.transfer_id,
+          transfer_number: result.transfer_number,
+          salesman_status: 'pending',
+          item_gross_total: item_gross_total || 0,
+          packet_gross_total: packet_gross_total || 0,
+          total_weight_with_bag: total_weight_with_bag || 0
+        });
       }
     );
   } catch (error) {
     console.error("Error processing request:", error.message);
-    console.error("Stack trace:", error.stack);
     res.status(400).json({ message: "Invalid data format", error: error.message });
   }
 };
+
+// Function to create notification for salesman
+const createSalesmanAssignmentNotification = (salesmanId, assignedNumber, transferData, fromStockPointId) => {
+  const db = require("../db");
+  
+  db.query(
+    'SELECT account_name FROM account_details WHERE account_id = ?',
+    [salesmanId],
+    (err, salesmanResult) => {
+      if (err) {
+        console.error('Error fetching salesman:', err);
+        return;
+      }
+      
+      const salesmanName = salesmanResult.length > 0 ? salesmanResult[0].account_name : 'Salesman';
+      const itemCount = transferData.length;
+      const productNames = transferData.map(item => item.product_name).filter(Boolean).join(', ');
+      const firstProducts = productNames.substring(0, 100) + (productNames.length > 100 ? '...' : '');
+      
+      db.query(
+        'SELECT stock_point_name FROM stock_points WHERE stock_point_id = ?',
+        [fromStockPointId],
+        (stockErr, stockResult) => {
+          const stockPointName = stockErr || stockResult.length === 0 ? 'Stock Room' : stockResult[0].stock_point_name;
+          
+          const title = `📦 New Assignment #${assignedNumber}`;
+          const message = `You have ${itemCount} new item(s) assigned from ${stockPointName}. Products: ${firstProducts}. Please review and accept.`;
+          
+          db.query(
+            `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
+             VALUES (?, 'salesman', ?, ?, 'salesman_assignment', ?, NOW())`,
+            [salesmanId, title, message, salesmanId],
+            (notifErr) => {
+              if (notifErr) {
+                console.error('Error creating notification:', notifErr);
+              } else {
+                console.log(`✅ Notification sent to salesman ${salesmanId}`);
+              }
+            }
+          );
+        }
+      );
+    }
+  );
+};
+
+// ==================== APPROVE / REJECT ====================
+exports.updateSalesmanStatus = (req, res) => {
+  const { transfer_id } = req.params;
+  const { status } = req.body;
+
+  if (!transfer_id) {
+    return res.status(400).json({ message: "Transfer ID is required" });
+  }
+
+  if (!status || !['accepted', 'rejected'].includes(status)) {
+    return res.status(400).json({ message: "Status must be 'accepted' or 'rejected'" });
+  }
+
+  assignedSalesmanModel.getById(transfer_id, (err, result) => {
+    if (err) {
+      console.error("Error fetching transfer:", err);
+      return res.status(500).json({ message: "Error fetching transfer" });
+    }
+
+    if (!result || !result.transfer_details) {
+      return res.status(404).json({ message: "Transfer not found" });
+    }
+
+    const transferDetails = result.transfer_details;
+    const salesmanId = transferDetails.to_salesman_id;
+
+    assignedSalesmanModel.updateSalesmanStatus(transfer_id, status, (updateErr, updateResult) => {
+      if (updateErr) {
+        console.error("Error updating status:", updateErr);
+        return res.status(500).json({ message: "Error updating status" });
+      }
+
+      // If accepted, update stock point
+      if (status === 'accepted' && updateResult && updateResult.itemCount > 0) {
+        // Get items to get product codes
+        assignedSalesmanModel.getById(transfer_id, (getErr, getResult) => {
+          if (!getErr && getResult && getResult.transfer_items) {
+            const productCodes = getResult.transfer_items.map(item => item.PCode_BarCode).filter(Boolean);
+            
+            if (productCodes.length > 0 && salesmanId) {
+              assignedSalesmanModel.updateStockPointForSalesman(productCodes, salesmanId, (stockErr, stockResult) => {
+                if (stockErr) {
+                  console.error("Error updating stock:", stockErr);
+                } else {
+                  console.log(`Updated stock for ${stockResult?.updatedCount || 0} products`);
+                }
+              });
+            }
+          }
+        });
+        
+        createSalesmanApprovalNotification(salesmanId, transferDetails.assigned_number, 'accepted');
+      } else {
+        createSalesmanApprovalNotification(salesmanId, transferDetails.assigned_number, 'rejected');
+      }
+
+      res.json({ 
+        message: `Assignment ${status} successfully`, 
+        transfer_id: transfer_id,
+        status: status
+      });
+    });
+  });
+};
+
+// Function for approval notification
+const createSalesmanApprovalNotification = (salesmanId, assignedNumber, status) => {
+  const db = require("../db");
+  
+  db.query(
+    'SELECT account_name FROM account_details WHERE account_id = ?',
+    [salesmanId],
+    (err, salesmanResult) => {
+      if (err) {
+        console.error('Error fetching salesman:', err);
+        return;
+      }
+      
+      const salesmanName = salesmanResult.length > 0 ? salesmanResult[0].account_name : 'Salesman';
+      
+      const title = status === 'accepted' 
+        ? `✅ Assignment #${assignedNumber} Accepted` 
+        : `❌ Assignment #${assignedNumber} Rejected`;
+      const message = status === 'accepted'
+        ? `Salesman ${salesmanName} has accepted the assignment #${assignedNumber}`
+        : `Salesman ${salesmanName} has rejected the assignment #${assignedNumber}`;
+      
+      db.query(
+        `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
+         VALUES (?, 'admin', ?, ?, 'salesman_assignment', ?, NOW())`,
+        [salesmanId, title, message, salesmanId],
+        (notifErr) => {
+          if (notifErr) {
+            console.error('Error creating admin notification:', notifErr);
+          } else {
+            console.log(`✅ Admin notification sent for ${assignedNumber}`);
+          }
+        }
+      );
+    }
+  );
+};
+
+// ==================== GET PENDING ASSIGNMENTS ====================
+exports.getPendingAssignments = (req, res) => {
+  const { salesman_id } = req.query;
+  
+  if (!salesman_id) {
+    return res.status(400).json({ message: "Salesman ID is required" });
+  }
+  
+  assignedSalesmanModel.getPendingAssignmentsBySalesman(salesman_id, (err, results) => {
+    if (err) {
+      console.error("Error fetching pending assignments:", err);
+      return res.status(500).json({ message: "Error fetching pending assignments" });
+    }
+    res.json(results);
+  });
+};
+
+// ==================== OTHER EXISTING METHODS ====================
+// Keep all other existing controller methods (getAllAssignedTransfers, getAssignedTransferById, etc.)
 
 exports.getAllAssignedTransfers = (req, res) => {
   assignedSalesmanModel.getAll((err, results) => {

@@ -13,4 +13,9 @@ router.get("/get-salesmen", assignedSalesmanController.getSalesmen);
 router.put("/update-status/:transfer_id", assignedSalesmanController.updateStatus);
 router.get("/get-assigned-products-by-salesman", assignedSalesmanController.getAssignedProductsBySalesman);
 
+
+// NEW: Routes for salesman approval workflow
+router.get("/get-pending-assignments", assignedSalesmanController.getPendingAssignments);
+router.put("/update-salesman-status/:transfer_id", assignedSalesmanController.updateSalesmanStatus);
+
 module.exports = router;

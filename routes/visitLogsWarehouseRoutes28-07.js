@@ -250,7 +250,14 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
                   <td style="padding: 8px 10px; font-weight: bold; color: #555;">Warehouse</td>
                   <td style="padding: 8px 10px; color: #333;">${warehouseName || 'N/A'}</td>
                 </tr>
-               
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Barcode</td>
+                  <td style="padding: 8px 10px; color: #333; font-family: monospace;">${barcode || 'N/A'}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 10px; font-weight: bold; color: #555;">Product</td>
+                  <td style="padding: 8px 10px; color: #333;">${productName || 'N/A'}</td>
+                </tr>
               </table>
             </div>
             

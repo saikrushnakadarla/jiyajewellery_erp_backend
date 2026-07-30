@@ -27,7 +27,7 @@ const saveImageFile = (base64String, assignedNumber, type = 'item', itemIndex = 
     const imageData = matches[2];
     const buffer = Buffer.from(imageData, 'base64');
 
-    // Ensure uploads directory exists - FIXED: Correct path
+    // Ensure uploads directory exists
     const uploadDir = path.join(__dirname, '../uploads/assigned-salesman');
     console.log(`Upload directory path: ${uploadDir}`);
     
@@ -72,6 +72,8 @@ const generateAssignedNumber = () => {
   return `ASN${year}${month}${day}${random}`;
 };
 
+// Cache to prevent duplicate notifications
+const notificationCache = new Set();
 
 exports.saveAssignedSalesman = (req, res) => {
   try {
@@ -121,6 +123,9 @@ exports.saveAssignedSalesman = (req, res) => {
       return processedItem;
     });
 
+    // Generate a unique notification key to prevent duplicates
+    const notificationKey = `assignment_${assigned_number}_${to_salesman_id}`;
+    
     assignedSalesmanModel.insert(
       processedTransferData,
       from_stock_point_id,
@@ -141,13 +146,20 @@ exports.saveAssignedSalesman = (req, res) => {
           return res.status(500).json({ message: "Error saving assigned salesman data", error: err });
         }
         
-        // Send notification to salesman about pending assignment
-        if (to_salesman_id) {
+        // Send notification to salesman about pending assignment (ONLY ONCE)
+        if (to_salesman_id && !notificationCache.has(notificationKey)) {
+          notificationCache.add(notificationKey);
+          // Clear cache after 10 seconds to allow future notifications
+          setTimeout(() => {
+            notificationCache.delete(notificationKey);
+          }, 10000);
+          
           createSalesmanAssignmentNotification(
             to_salesman_id,
             assigned_number,
             processedTransferData,
-            from_stock_point_id
+            from_stock_point_id,
+            result.transfer_id
           );
         }
         
@@ -168,49 +180,65 @@ exports.saveAssignedSalesman = (req, res) => {
   }
 };
 
-// Function to create notification for salesman
-const createSalesmanAssignmentNotification = (salesmanId, assignedNumber, transferData, fromStockPointId) => {
+// Function to create notification for salesman (UPDATED to include transfer_id)
+const createSalesmanAssignmentNotification = (salesmanId, assignedNumber, transferData, fromStockPointId, transferId) => {
   const db = require("../db");
   
-  db.query(
-    'SELECT account_name FROM account_details WHERE account_id = ?',
-    [salesmanId],
-    (err, salesmanResult) => {
-      if (err) {
-        console.error('Error fetching salesman:', err);
-        return;
-      }
-      
-      const salesmanName = salesmanResult.length > 0 ? salesmanResult[0].account_name : 'Salesman';
-      const itemCount = transferData.length;
-      const productNames = transferData.map(item => item.product_name).filter(Boolean).join(', ');
-      const firstProducts = productNames.substring(0, 100) + (productNames.length > 100 ? '...' : '');
-      
-      db.query(
-        'SELECT stock_point_name FROM stock_points WHERE stock_point_id = ?',
-        [fromStockPointId],
-        (stockErr, stockResult) => {
-          const stockPointName = stockErr || stockResult.length === 0 ? 'Stock Room' : stockResult[0].stock_point_name;
-          
-          const title = `📦 New Assignment #${assignedNumber}`;
-          const message = `You have ${itemCount} new item(s) assigned from ${stockPointName}. Products: ${firstProducts}. Please review and accept.`;
-          
-          db.query(
-            `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
-             VALUES (?, 'salesman', ?, ?, 'salesman_assignment', ?, NOW())`,
-            [salesmanId, title, message, salesmanId],
-            (notifErr) => {
-              if (notifErr) {
-                console.error('Error creating notification:', notifErr);
-              } else {
-                console.log(`✅ Notification sent to salesman ${salesmanId}`);
-              }
-            }
-          );
-        }
-      );
+  // Check if notification already exists for this assignment
+  const checkSql = `SELECT id FROM notifications WHERE user_id = ? AND related_id = ? AND type = 'salesman_assignment' AND is_read = 0`;
+  db.query(checkSql, [salesmanId, transferId], (checkErr, checkResults) => {
+    if (checkErr) {
+      console.error('Error checking existing notification:', checkErr);
+      return;
     }
-  );
+    
+    // If notification already exists, don't create duplicate
+    if (checkResults.length > 0) {
+      console.log(`⚠️ Notification already exists for assignment ${assignedNumber}, skipping duplicate`);
+      return;
+    }
+    
+    db.query(
+      'SELECT account_name FROM account_details WHERE account_id = ?',
+      [salesmanId],
+      (err, salesmanResult) => {
+        if (err) {
+          console.error('Error fetching salesman:', err);
+          return;
+        }
+        
+        const salesmanName = salesmanResult.length > 0 ? salesmanResult[0].account_name : 'Salesman';
+        const itemCount = transferData.length;
+        const productNames = transferData.map(item => item.product_name).filter(Boolean).join(', ');
+        const firstProducts = productNames.substring(0, 100) + (productNames.length > 100 ? '...' : '');
+        
+        db.query(
+          'SELECT stock_point_name FROM stock_points WHERE stock_point_id = ?',
+          [fromStockPointId],
+          (stockErr, stockResult) => {
+            const stockPointName = stockErr || stockResult.length === 0 ? 'Stock Room' : stockResult[0].stock_point_name;
+            
+            // Create a single comprehensive notification with all details
+            const title = `📦 New Assignment #${assignedNumber}`;
+            const message = `You have ${itemCount} new item(s) assigned from ${stockPointName}. Products: ${firstProducts}. Please review and accept.`;
+            
+            db.query(
+              `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
+               VALUES (?, 'salesman', ?, ?, 'salesman_assignment', ?, NOW())`,
+              [salesmanId, title, message, transferId],
+              (notifErr) => {
+                if (notifErr) {
+                  console.error('Error creating notification:', notifErr);
+                } else {
+                  console.log(`✅ Single notification sent to salesman ${salesmanId} for ${assignedNumber}`);
+                }
+              }
+            );
+          }
+        );
+      }
+    );
+  });
 };
 
 // ==================== APPROVE / REJECT ====================
@@ -264,9 +292,9 @@ exports.updateSalesmanStatus = (req, res) => {
           }
         });
         
-        createSalesmanApprovalNotification(salesmanId, transferDetails.assigned_number, 'accepted');
+        createSalesmanApprovalNotification(salesmanId, transferDetails.assigned_number, 'accepted', transfer_id);
       } else {
-        createSalesmanApprovalNotification(salesmanId, transferDetails.assigned_number, 'rejected');
+        createSalesmanApprovalNotification(salesmanId, transferDetails.assigned_number, 'rejected', transfer_id);
       }
 
       res.json({ 
@@ -279,7 +307,7 @@ exports.updateSalesmanStatus = (req, res) => {
 };
 
 // Function for approval notification
-const createSalesmanApprovalNotification = (salesmanId, assignedNumber, status) => {
+const createSalesmanApprovalNotification = (salesmanId, assignedNumber, status, transferId) => {
   const db = require("../db");
   
   db.query(
@@ -303,7 +331,7 @@ const createSalesmanApprovalNotification = (salesmanId, assignedNumber, status) 
       db.query(
         `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
          VALUES (?, 'admin', ?, ?, 'salesman_assignment', ?, NOW())`,
-        [salesmanId, title, message, salesmanId],
+        [salesmanId, title, message, transferId || salesmanId],
         (notifErr) => {
           if (notifErr) {
             console.error('Error creating admin notification:', notifErr);
@@ -334,8 +362,6 @@ exports.getPendingAssignments = (req, res) => {
 };
 
 // ==================== OTHER EXISTING METHODS ====================
-// Keep all other existing controller methods (getAllAssignedTransfers, getAssignedTransferById, etc.)
-
 exports.getAllAssignedTransfers = (req, res) => {
   assignedSalesmanModel.getAll((err, results) => {
     if (err) {

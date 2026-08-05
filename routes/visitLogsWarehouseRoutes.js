@@ -363,6 +363,7 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
 
 // Helper function to create notification and send email for customer (UPDATED - GROUPED BARCODES)
 // Helper function to create notification and send email for customer (UPDATED - INCLUDES SALESMAN PHOTO IN NOTIFICATION)
+// Helper function to create notification and send email for customer (UPDATED - uses schedule ID as related_id)
 async function createWarehouseScheduleNotification(
   customerAccountId, 
   warehouseId, 
@@ -371,7 +372,8 @@ async function createWarehouseScheduleNotification(
   salesmanId, 
   salesmanName, 
   barcodeDetailsArray, 
-  salesmanPhoto
+  salesmanPhoto,
+  scheduleIds // Add this parameter to pass the inserted schedule IDs
 ) {
   try {
     // Get customer details from account_details
@@ -539,6 +541,9 @@ async function createWarehouseScheduleNotification(
       console.log(`✅ Single email sent to ${customerEmail} with ${barcodes.length} barcodes`);
     }
     
+    // Use the first schedule ID as the related_id
+    const relatedId = scheduleIds && scheduleIds.length > 0 ? scheduleIds[0] : customerAccountId;
+    
     // Create notification with salesman photo URL in message
     const title = '📦 New Warehouse Visit Scheduled';
     const photoText = photoUrl ? ` [Salesperson Photo: ${photoUrl}]` : '';
@@ -550,10 +555,10 @@ async function createWarehouseScheduleNotification(
     await queryAsync(
       `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at, photo_url) 
        VALUES (?, 'customer', ?, ?, 'warehouse_schedule', ?, NOW(), ?)`,
-      [customerAccountId, title, message, customerAccountId, photoUrl]
+      [customerAccountId, title, message, relatedId, photoUrl]
     );
     
-    console.log(`✅ Single warehouse schedule notification sent to customer ${customerAccountId}`);
+    console.log(`✅ Single warehouse schedule notification sent to customer ${customerAccountId} with related_id: ${relatedId}`);
     
     // Send notification to salesman if assigned
     if (salesmanId) {
@@ -565,7 +570,7 @@ async function createWarehouseScheduleNotification(
       await queryAsync(
         `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
          VALUES (?, 'salesman', ?, ?, 'warehouse_schedule', ?, NOW())`,
-        [salesmanId, salesmanTitle, salesmanMessage, customerAccountId]
+        [salesmanId, salesmanTitle, salesmanMessage, relatedId]
       );
     }
     
@@ -581,7 +586,7 @@ async function createWarehouseScheduleNotification(
     await queryAsync(
       `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
        VALUES (?, 'warehouse', ?, ?, 'warehouse_schedule', ?, NOW())`,
-      [warehouseId, warehouseTitle, warehouseMessage, customerAccountId]
+      [warehouseId, warehouseTitle, warehouseMessage, relatedId]
     );
     
     return true;
@@ -667,6 +672,7 @@ router.get('/:id', async (req, res) => {
 
 // POST - Create new warehouse visit schedule with multiple barcodes and photo
 // POST - Create new warehouse visit schedule with multiple barcodes and photo (UPDATED)
+// POST - Create new warehouse visit schedule with multiple barcodes and photo
 router.post('/', upload.single('salesman_photo'), async (req, res) => {
   try {
     const { customer_id, warehouse_id, barcodes, scheduled_date, salesman_id, salesman_name } = req.body;
@@ -863,15 +869,15 @@ router.post('/', upload.single('salesman_photo'), async (req, res) => {
       
       const result = await queryAsync(
         `INSERT INTO visit_logs_warehouse_schedule 
-         (customer_account_id, customer_id, warehouse_id, barcode, scheduled_date, salesman_id, salesman_name, salesman_photo) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date, salesmanIdInt, finalSalesmanName, salesmanPhoto]
+         (customer_account_id, customer_id, warehouse_id, barcode, scheduled_date, salesman_id, salesman_name, salesman_photo, customer_status) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date, salesmanIdInt, finalSalesmanName, salesmanPhoto, 'Scheduled']
       );
       insertedIds.push(result.insertId);
       console.log(`✅ Schedule inserted with ID: ${result.insertId} (customer_id: ${actualCustomerId}, salesman: ${finalSalesmanName || 'Not assigned'})`);
     }
     
-    // Send SINGLE notification and SINGLE email for ALL barcodes
+    // Send SINGLE notification and SINGLE email for ALL barcodes - PASS THE SCHEDULE IDS
     await createWarehouseScheduleNotification(
       customerIdInt, 
       warehouseIdInt, 
@@ -880,7 +886,8 @@ router.post('/', upload.single('salesman_photo'), async (req, res) => {
       salesmanIdInt, 
       finalSalesmanName,
       barcodeDetails,  // Pass all barcode details
-      salesmanPhoto
+      salesmanPhoto,
+      insertedIds  // Pass the inserted schedule IDs
     );
     
     res.status(201).json({ 
@@ -2490,5 +2497,371 @@ router.put('/notifications/mark-all-read/:userId', async (req, res) => {
     });
   }
 });
+
+
+// PUT - Update customer status for a schedule (Available/Not Available)
+router.put('/:id/customer-status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { customer_status } = req.body;
+    
+    console.log(`📝 Updating customer status for schedule ${id} to ${customer_status}...`);
+    
+    if (!customer_status || !['Scheduled', 'Available', 'Not Available'].includes(customer_status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid customer_status. Must be Scheduled, Available, or Not Available'
+      });
+    }
+    
+    // Get schedule details before updating
+    const schedule = await queryAsync(
+      'SELECT * FROM visit_logs_warehouse_schedule WHERE id = ?',
+      [id]
+    );
+    
+    if (schedule.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Schedule not found'
+      });
+    }
+    
+    // Update the customer_status
+    await queryAsync(
+      `UPDATE visit_logs_warehouse_schedule 
+       SET customer_status = ?, updated_at = NOW() 
+       WHERE id = ?`,
+      [customer_status, id]
+    );
+    
+    // If status is Not Available, we don't send notification yet (will be handled by reschedule)
+    // If status is Available, send notification
+    if (customer_status === 'Available') {
+      await createCustomerAvailabilityNotification(schedule[0], 'available');
+    }
+    
+    console.log(`✅ Customer status updated to ${customer_status} for schedule ${id}`);
+    
+    res.json({
+      success: true,
+      message: `Customer status updated to ${customer_status}`,
+      data: {
+        id: id,
+        customer_status: customer_status
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error updating customer status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update customer status: ' + error.message
+    });
+  }
+});
+
+// PUT - Update customer status to Not Available with reschedule details
+router.put('/:id/not-available-reschedule', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reschedule_date, reschedule_notes } = req.body;
+    
+    console.log(`📝 Updating schedule ${id} to Not Available with reschedule...`);
+    
+    if (!reschedule_date) {
+      return res.status(400).json({
+        success: false,
+        message: 'Reschedule date and time are required'
+      });
+    }
+    
+    // Get schedule details before updating
+    const schedule = await queryAsync(
+      'SELECT * FROM visit_logs_warehouse_schedule WHERE id = ?',
+      [id]
+    );
+    
+    if (schedule.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Schedule not found'
+      });
+    }
+    
+    // Update the schedule with customer_status, reschedule_date, and reschedule_notes
+    await queryAsync(
+      `UPDATE visit_logs_warehouse_schedule 
+       SET customer_status = 'Not Available', 
+           reschedule_date = ?,
+           reschedule_notes = ?,
+           updated_at = NOW() 
+       WHERE id = ?`,
+      [reschedule_date, reschedule_notes || 'Customer requested reschedule', id]
+    );
+    
+    // Create notification for Not Available with reschedule
+    await createCustomerAvailabilityNotification(schedule[0], 'not_available', reschedule_date, reschedule_notes);
+    
+    console.log(`✅ Schedule ${id} marked as Not Available with reschedule`);
+    
+    res.json({
+      success: true,
+      message: 'Customer marked as Not Available. Reschedule request sent.',
+      data: {
+        id: id,
+        customer_status: 'Not Available',
+        reschedule_date: reschedule_date,
+        reschedule_notes: reschedule_notes
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error updating with reschedule:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update with reschedule: ' + error.message
+    });
+  }
+});
+
+// Helper function for customer availability notification
+async function createCustomerAvailabilityNotification(scheduleData, status, rescheduleDate = null, rescheduleNotes = null) {
+  try {
+    const { 
+      customer_account_id, 
+      warehouse_id, 
+      barcode, 
+      scheduled_date, 
+      salesman_id, 
+      salesman_name,
+      salesman_photo 
+    } = scheduleData;
+    
+    // Get customer details
+    const customer = await queryAsync(
+      'SELECT account_name, customer_id FROM account_details WHERE account_id = ?',
+      [customer_account_id]
+    );
+    
+    // Get warehouse details
+    const warehouse = await queryAsync(
+      'SELECT stock_point_name FROM stock_points WHERE stock_point_id = ?',
+      [warehouse_id]
+    );
+    
+    const customerName = customer.length > 0 ? customer[0].account_name : 'Customer';
+    const customerId = customer.length > 0 ? customer[0].customer_id : 'N/A';
+    const warehouseName = warehouse.length > 0 ? warehouse[0].stock_point_name : 'Warehouse';
+    
+    const scheduledDateTime = new Date(scheduled_date);
+    const formattedDate = scheduledDateTime.toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+    const formattedTime = scheduledDateTime.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+    
+    let title, message, emailSubject, emailHtml;
+    
+    if (status === 'available') {
+      title = '✅ Customer Available for Visit';
+      message = `Customer ${customerName} has confirmed availability for the warehouse visit at ${warehouseName} on ${formattedDate} at ${formattedTime}.
+        Barcode: ${barcode}
+        Salesperson: ${salesman_name || 'Not assigned'}`;
+      
+      emailSubject = '✅ Customer Available - Jiyaa Jewels';
+      emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background: #ffffff;">
+          <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #f0f0f0;">
+            <h2 style="color: #4F46E5; margin: 0;">Jiyaa Jewels</h2>
+            <p style="color: #666; margin: 5px 0 0 0;">Customer Available</p>
+          </div>
+          <div style="padding: 20px 0;">
+            <p style="font-size: 16px; color: #333;">Dear <strong>${salesman_name || 'Salesperson'}</strong>,</p>
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              Customer <strong>${customerName}</strong> is available for the scheduled warehouse visit.
+            </p>
+            <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #4CAF50;">
+              <p style="font-size: 14px; color: #333; margin: 0;">
+                <strong>Customer:</strong> ${customerName} (${customerId})<br>
+                <strong>Warehouse:</strong> ${warehouseName}<br>
+                <strong>Barcode:</strong> ${barcode}<br>
+                <strong>Date:</strong> ${formattedDate}<br>
+                <strong>Time:</strong> ${formattedTime}
+              </p>
+            </div>
+          </div>
+          <div style="padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center; color: #888; font-size: 13px;">
+            <p style="margin: 0;">Thank you for your service</p>
+          </div>
+        </div>
+      `;
+      
+      // Send email to salesman
+      if (salesman_id) {
+        const salesmanEmail = await getSalesmanEmail(salesman_id);
+        if (salesmanEmail) {
+          await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to: salesmanEmail,
+            subject: emailSubject,
+            html: emailHtml
+          });
+          console.log(`✅ Availability email sent to salesman ${salesmanEmail}`);
+        }
+      }
+      
+      // Notification to salesman
+      await queryAsync(
+        `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
+         VALUES (?, 'salesman', ?, ?, 'warehouse_schedule', ?, NOW())`,
+        [salesman_id, title, message, customer_account_id]
+      );
+      
+      // Notification to warehouse
+      const warehouseTitle = '✅ Customer Available for Visit';
+      const warehouseMessage = `Customer ${customerName} (${customerId}) is available for the visit at your warehouse.
+        Date: ${formattedDate} at ${formattedTime}
+        Barcode: ${barcode}`;
+      
+      await queryAsync(
+        `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
+         VALUES (?, 'warehouse', ?, ?, 'warehouse_schedule', ?, NOW())`,
+        [warehouse_id, warehouseTitle, warehouseMessage, customer_account_id]
+      );
+      
+    } else if (status === 'not_available') {
+      const rescheduleDateTime = rescheduleDate ? new Date(rescheduleDate) : null;
+      const rescheduleFormattedDate = rescheduleDateTime ? rescheduleDateTime.toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      }) : 'N/A';
+      const rescheduleFormattedTime = rescheduleDateTime ? rescheduleDateTime.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      }) : 'N/A';
+      
+      title = '⚠️ Customer Not Available - Reschedule Requested';
+      message = `Customer ${customerName} is not available for the scheduled visit at ${warehouseName} on ${formattedDate} at ${formattedTime}.
+        Reschedule requested for: ${rescheduleFormattedDate} at ${rescheduleFormattedTime}
+        Barcode: ${barcode}
+        Notes: ${rescheduleNotes || 'No additional notes'}`;
+      
+      emailSubject = '⚠️ Customer Not Available - Reschedule Requested - Jiyaa Jewels';
+      emailHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; background: #ffffff;">
+          <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #f0f0f0;">
+            <h2 style="color: #4F46E5; margin: 0;">Jiyaa Jewels</h2>
+            <p style="color: #666; margin: 5px 0 0 0;">Reschedule Requested</p>
+          </div>
+          <div style="padding: 20px 0;">
+            <p style="font-size: 16px; color: #333;">Dear <strong>${salesman_name || 'Salesperson'}</strong>,</p>
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              Customer <strong>${customerName}</strong> is not available for the scheduled visit and has requested a reschedule.
+            </p>
+            <div style="background: #fff3e0; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #FF9800;">
+              <p style="font-size: 14px; color: #333; margin: 0;">
+                <strong>Customer:</strong> ${customerName} (${customerId})<br>
+                <strong>Warehouse:</strong> ${warehouseName}<br>
+                <strong>Barcode:</strong> ${barcode}<br>
+                <strong>Original Date:</strong> ${formattedDate}<br>
+                <strong>Original Time:</strong> ${formattedTime}<br>
+                <strong>Requested Reschedule:</strong> ${rescheduleFormattedDate} at ${rescheduleFormattedTime}<br>
+                <strong>Notes:</strong> ${rescheduleNotes || 'No additional notes'}
+              </p>
+            </div>
+            <p style="font-size: 15px; color: #444; line-height: 1.6;">
+              Please coordinate with the customer to confirm the new visit time.
+            </p>
+          </div>
+          <div style="padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center; color: #888; font-size: 13px;">
+            <p style="margin: 0;">Thank you for your service</p>
+          </div>
+        </div>
+      `;
+      
+      // Send email to salesman
+      if (salesman_id) {
+        const salesmanEmail = await getSalesmanEmail(salesman_id);
+        if (salesmanEmail) {
+          await transporter.sendMail({
+            from: process.env.EMAIL_USER,
+            to: salesmanEmail,
+            subject: emailSubject,
+            html: emailHtml
+          });
+          console.log(`✅ Reschedule email sent to salesman ${salesmanEmail}`);
+        }
+      }
+      
+      // Notification to salesman
+      await queryAsync(
+        `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
+         VALUES (?, 'salesman', ?, ?, 'warehouse_schedule', ?, NOW())`,
+        [salesman_id, title, message, customer_account_id]
+      );
+      
+      // Notification to warehouse
+      const warehouseTitle = '⚠️ Customer Not Available - Reschedule Requested';
+      const warehouseMessage = `Customer ${customerName} (${customerId}) is not available for the visit at your warehouse.
+        Original Date: ${formattedDate} at ${formattedTime}
+        Requested Reschedule: ${rescheduleFormattedDate} at ${rescheduleFormattedTime}
+        Barcode: ${barcode}`;
+      
+      await queryAsync(
+        `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
+         VALUES (?, 'warehouse', ?, ?, 'warehouse_schedule', ?, NOW())`,
+        [warehouse_id, warehouseTitle, warehouseMessage, customer_account_id]
+      );
+      
+      // Also notify admin or manager (optional)
+      // You can add additional notification for admin here
+    }
+    
+  } catch (error) {
+    console.error('❌ Error creating customer availability notification:', error);
+  }
+}
+
+// Helper function to get salesman email
+async function getSalesmanEmail(salesmanId) {
+  try {
+    const result = await queryAsync(
+      'SELECT email, user_id FROM account_details WHERE account_id = ?',
+      [salesmanId]
+    );
+    
+    if (result.length === 0) return null;
+    
+    if (result[0].email) {
+      return result[0].email;
+    }
+    
+    // Try to get from users table
+    if (result[0].user_id) {
+      const userResult = await queryAsync(
+        'SELECT email_id FROM users WHERE id = ?',
+        [result[0].user_id]
+      );
+      if (userResult.length > 0 && userResult[0].email_id) {
+        return userResult[0].email_id;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('❌ Error getting salesman email:', error);
+    return null;
+  }
+}
 
 module.exports = router;

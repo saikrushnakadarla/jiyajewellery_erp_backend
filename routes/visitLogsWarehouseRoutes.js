@@ -871,7 +871,7 @@ router.post('/', upload.single('salesman_photo'), async (req, res) => {
         `INSERT INTO visit_logs_warehouse_schedule 
          (customer_account_id, customer_id, warehouse_id, barcode, scheduled_date, salesman_id, salesman_name, salesman_photo, customer_status) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date, salesmanIdInt, finalSalesmanName, salesmanPhoto, 'Scheduled']
+        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date, salesmanIdInt, finalSalesmanName, salesmanPhoto, 'Pending']
       );
       insertedIds.push(result.insertId);
       console.log(`✅ Schedule inserted with ID: ${result.insertId} (customer_id: ${actualCustomerId}, salesman: ${finalSalesmanName || 'Not assigned'})`);

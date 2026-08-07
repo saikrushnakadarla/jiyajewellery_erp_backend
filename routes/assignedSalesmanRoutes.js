@@ -18,4 +18,10 @@ router.get("/get-assigned-products-by-salesman", assignedSalesmanController.getA
 router.get("/get-pending-assignments", assignedSalesmanController.getPendingAssignments);
 router.put("/update-salesman-status/:transfer_id", assignedSalesmanController.updateSalesmanStatus);
 
+
+// Weight routes for items
+router.put("/update-item-weight/:item_id", assignedSalesmanController.updateItemWeight);
+router.get("/get-item-weight/:item_id", assignedSalesmanController.getItemWeight);
+router.get("/get-items-weights/:assigned_id", assignedSalesmanController.getItemsWithWeightsByAssignment);
+
 module.exports = router;

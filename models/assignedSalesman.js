@@ -93,7 +93,16 @@ exports.insert = (
       total_price: parseFloat(item.total_price) || 0,
       PCode_BarCode: item.PCode_BarCode,
       image: item.image || null,
-      remarks: item.remarks || null
+      remarks: item.remarks || null,
+
+        // ===== FIX: carry weight-machine data into pending_data JSON =====
+        weight_machine_reading: parseFloat(item.weight_machine_reading) || 0,
+        weight_machine_grams: parseInt(item.weight_machine_grams) || 0,
+        weight_machine_milligrams: parseInt(item.weight_machine_milligrams) || 0,
+        weight_machine_confidence: parseInt(item.weight_machine_confidence) || 0,
+        weight_machine_raw: item.weight_machine_raw || null,
+
+
     })),
     from_stock_point_id: from_stock_point_id,
     to_salesman_id: to_salesman_id,
@@ -198,58 +207,73 @@ exports.approveAssignment = (assigned_id, callback) => {
       
       // Insert items into assigned_salesman_items
       const insertItemsSql = `
-        INSERT INTO assigned_salesman_items (
-          assigned_id,
-          product_id,
-          PCode_BarCode,
-          product_name,
-          metal_type,
-          purity,
-          category,
-          sub_category,
-          design_name,
-          qty,
-          gross_weight,
-          cover_wt,
-          card_wt,
-          packing_wt,
-          stone_weight,
-          net_weight,
-          rate,
-          making_charges,
-          stone_price,
-          total_price,
-          image,
-          remarks,
-          created_at
-        ) VALUES ?
-      `;
-      
-      const itemValues = transferData.map(item => [
-        assigned_id,
-        item.product_id || null,
-        item.PCode_BarCode || null,
-        item.product_name || null,
-        item.metal_type || null,
-        item.purity || null,
-        item.category || null,
-        item.sub_category || null,
-        item.design_name || null,
-        parseFloat(item.qty) || 0,
-        parseFloat(item.gross_weight) || 0,
-        parseFloat(item.cover_wt) || 0,
-        parseFloat(item.card_wt) || 0,
-        parseFloat(item.packing_wt) || 0,
-        parseFloat(item.stone_weight) || 0,
-        parseFloat(item.net_weight) || 0,
-        parseFloat(item.rate) || 0,
-        parseFloat(item.making_charges) || 0,
-        parseFloat(item.stone_price) || 0,
-        parseFloat(item.total_price) || 0,
-        item.image || null,
-        item.remarks || null,
-        new Date()
-      ]);
+  INSERT INTO assigned_salesman_items (
+    assigned_id,
+    product_id,
+    PCode_BarCode,
+    product_name,
+    metal_type,
+    purity,
+    category,
+    sub_category,
+    design_name,
+    qty,
+    gross_weight,
+    cover_wt,
+    card_wt,
+    packing_wt,
+    stone_weight,
+    net_weight,
+    rate,
+    making_charges,
+    stone_price,
+    total_price,
+    image,
+    remarks,
+    weight_machine_reading,
+    weight_machine_grams,
+    weight_machine_milligrams,
+    weight_machine_confidence,
+    weight_machine_raw,
+    weight_extracted_at,
+    created_at
+  ) VALUES ?
+`;
+
+const itemValues = transferData.map(item => [
+  assigned_id,
+  item.product_id || null,
+  item.PCode_BarCode || null,
+  item.product_name || null,
+  item.metal_type || null,
+  item.purity || null,
+  item.category || null,
+  item.sub_category || null,
+  item.design_name || null,
+  parseFloat(item.qty) || 0,
+  parseFloat(item.gross_weight) || 0,
+  parseFloat(item.cover_wt) || 0,
+  parseFloat(item.card_wt) || 0,
+  parseFloat(item.packing_wt) || 0,
+  parseFloat(item.stone_weight) || 0,
+  parseFloat(item.net_weight) || 0,
+  parseFloat(item.rate) || 0,
+  parseFloat(item.making_charges) || 0,
+  parseFloat(item.stone_price) || 0,
+  parseFloat(item.total_price) || 0,
+  item.image || null,
+  item.remarks || null,
+
+  // ===== FIX: actually write weight-machine data into the table =====
+  parseFloat(item.weight_machine_reading) || 0,
+  parseInt(item.weight_machine_grams) || 0,
+  parseInt(item.weight_machine_milligrams) || 0,
+  parseInt(item.weight_machine_confidence) || 0,
+  item.weight_machine_raw || null,
+  item.weight_machine_reading ? new Date() : null,   // weight_extracted_at
+
+  new Date()  // created_at
+]);
       
       db.query(insertItemsSql, [itemValues], (itemsErr) => {
         if (itemsErr) {
@@ -699,4 +723,85 @@ exports.getProductsBySalesman = (salesman_id, callback) => {
     }
     callback(null, results);
   });
+};
+
+
+// ==================== UPDATE WEIGHT FOR ITEM ====================
+// ==================== UPDATE WEIGHT FOR ITEM ====================
+exports.updateItemWeight = (item_id, weightData, callback) => {
+  const { 
+    total_grams, 
+    grams, 
+    milligrams, 
+    raw_text, 
+    confidence 
+  } = weightData;
+
+  const sql = `
+    UPDATE assigned_salesman_items 
+    SET 
+      weight_machine_reading = ?,
+      weight_machine_grams = ?,
+      weight_machine_milligrams = ?,
+      weight_machine_confidence = ?,
+      weight_machine_raw = ?,
+      weight_extracted_at = NOW()
+    WHERE item_id = ?
+  `;
+
+  const params = [
+    total_grams || 0,
+    grams || 0,
+    milligrams || 0,
+    confidence || 100,
+    raw_text || null,
+    item_id
+  ];
+
+  db.query(sql, params, (err, result) => {
+    if (err) {
+      console.error("Error updating item weight:", err);
+      return callback(err);
+    }
+    callback(null, { success: true, affectedRows: result.affectedRows });
+  });
+};
+
+// ==================== GET ITEM WEIGHT ====================
+exports.getItemWeight = (item_id, callback) => {
+  const sql = `
+    SELECT 
+      item_id,
+      weight_machine_reading,
+      weight_machine_grams,
+      weight_machine_milligrams,
+      weight_machine_confidence,
+      weight_machine_raw,
+      weight_extracted_at
+    FROM assigned_salesman_items 
+    WHERE item_id = ?
+  `;
+  db.query(sql, [item_id], callback);
+};
+
+// ==================== GET ALL ITEMS WITH WEIGHT FOR ASSIGNMENT ====================
+exports.getItemsWithWeightsByAssignment = (assigned_id, callback) => {
+  const sql = `
+    SELECT 
+      item_id,
+      product_id,
+      PCode_BarCode,
+      product_name,
+      gross_weight,
+      weight_machine_reading,
+      weight_machine_grams,
+      weight_machine_milligrams,
+      weight_machine_confidence,
+      weight_machine_raw,
+      weight_extracted_at
+    FROM assigned_salesman_items 
+    WHERE assigned_id = ?
+    ORDER BY item_id ASC
+  `;
+  db.query(sql, [assigned_id], callback);
 };

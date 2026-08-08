@@ -137,7 +137,7 @@ exports.insert = (
 
     const receivedId = transferResult.insertId;
 
-    // Updated INSERT with cover_wt, card_wt, packing_wt fields
+    // ===== FIXED: INSERT now includes weight_machine_* columns =====
     const insertItemsSql = `
       INSERT INTO received_salesman_items (
         received_id,
@@ -163,6 +163,12 @@ exports.insert = (
         total_price,
         image,
         remarks,
+        weight_machine_reading,
+        weight_machine_grams,
+        weight_machine_milligrams,
+        weight_machine_confidence,
+        weight_machine_raw,
+        weight_extracted_at,
         created_at
       ) VALUES ?
     `;
@@ -177,6 +183,15 @@ exports.insert = (
       if (imagePath && !imagePath.startsWith('/') && !imagePath.startsWith('http')) {
         imagePath = '/' + imagePath;
       }
+
+      // ===== FIXED: extract weight machine values sent from frontend =====
+      const weightReading = parseFloat(item.weight_machine_reading) || 0;
+      const weightGrams = parseInt(item.weight_machine_grams) || 0;
+      const weightMilligrams = parseInt(item.weight_machine_milligrams) || 0;
+      const weightConfidence = parseInt(item.weight_machine_confidence) || 0;
+      const weightRaw = item.weight_machine_raw || null;
+      // Only stamp a timestamp if a weight was actually captured for this item
+      const weightExtractedAt = weightReading > 0 ? new Date() : null;
 
       return [
         receivedId,
@@ -202,7 +217,13 @@ exports.insert = (
         parseFloat(item.total_price) || 0,
         imagePath,
         item.remarks || null,
-        new Date()
+        weightReading,
+        weightGrams,
+        weightMilligrams,
+        weightConfidence,
+        weightRaw,
+        weightExtractedAt,
+        new Date() // created_at
       ];
     });
 
@@ -211,13 +232,16 @@ exports.insert = (
         console.error("Error inserting received items:", itemsErr);
         return callback(itemsErr);
       }
-      
+
       console.log(`✅ Received ${received_number} saved with ${itemValues.length} items.`);
       console.log(`📷 Capture image: ${capture_image || 'None'}`);
       console.log(`📦 StockOutWard Barcode: ${stock_outward_barcode || 'None'}`);
       console.log(`📦 StockOutWard Gross WT: ${stock_outward_gross_wt || 'None'}`);
       console.log(`📦 StockOutWard Type: ${stock_outward_type || 'None'}`);
       console.log(`📦 StockOutWard Packet Barcode: ${stock_outward_packet_barcode || 'None'}`);
+      // Log a quick summary of how many items actually had weight captured
+      const weightedCount = itemValues.filter(v => v[22] > 0).length; // index 22 = weight_machine_reading
+      console.log(`⚖️  Items with captured weight: ${weightedCount}/${itemValues.length}`);
       callback(null, { transfer_id: receivedId, transfer_number: received_number });
     });
   });
@@ -298,7 +322,7 @@ exports.getById = (received_id, callback) => {
       console.error("Error fetching received details:", err);
       return callback(err);
     }
-    
+
     if (mainResults.length === 0) {
       return callback(null, null);
     }
@@ -314,12 +338,12 @@ exports.getById = (received_id, callback) => {
         console.error("Error fetching received items:", itemsErr);
         return callback(itemsErr);
       }
-      
+
       const result = {
         transfer_details: mainResults[0],
         transfer_items: itemsResults
       };
-      
+
       callback(null, result);
     });
   });
@@ -338,7 +362,7 @@ exports.delete = (received_id, callback) => {
   const deleteItemsSql = `DELETE FROM received_salesman_items WHERE received_id = ?`;
   db.query(deleteItemsSql, [received_id], (err) => {
     if (err) return callback(err);
-    
+
     const deleteTransferSql = `DELETE FROM received_salesman_transfers WHERE received_id = ?`;
     db.query(deleteTransferSql, [received_id], callback);
   });
@@ -364,11 +388,11 @@ exports.getLastReceivedNumber = (callback) => {
       console.error("Error fetching last received number:", err);
       return callback(err);
     }
-    
+
     if (results.length === 0) {
       return callback(null, "RCN001");
     }
-    
+
     const lastNumber = results[0].received_number;
     const match = lastNumber.match(/RCN(\d+)/);
     if (match) {
@@ -413,7 +437,7 @@ exports.updateStockPointForReceived = (productCodes, stockPointId, to_user_id, c
     }
 
     const stockPointName = stockPointResult[0].stock_point_name;
-    
+
     // Ensure to_user_id is a number or null - convert if needed
     const userId = to_user_id !== undefined && to_user_id !== null ? parseInt(to_user_id) : null;
 
@@ -425,7 +449,7 @@ exports.updateStockPointForReceived = (productCodes, stockPointId, to_user_id, c
     });
 
     const placeholders = productCodes.map(() => '?').join(',');
-    
+
     const updateSql = `
       UPDATE opening_tags_entry 
       SET Stock_Point = ?, user_id = ?, Status = 'Available' 
@@ -450,7 +474,7 @@ exports.updateStockPointForReceived = (productCodes, stockPointId, to_user_id, c
 // Add this function to receivedSalesmanModel.js
 
 // Update stock point with status based on type (Selected for packet, Available for normal)
-// Replace the updateStockPointWithStatus function with this version that handles per-product status
+// Handles per-product status individually
 exports.updateStockPointWithStatus = (transferData, stockPointId, to_user_id, callback) => {
   if (!transferData || transferData.length === 0) {
     return callback(null, { message: "No products to update" });
@@ -535,24 +559,24 @@ exports.deleteAssignedRecords = (assignedIds, callback) => {
 
   // First delete from assigned_salesman_items
   const deleteItemsSql = `DELETE FROM assigned_salesman_items WHERE assigned_id IN (?)`;
-  
+
   db.query(deleteItemsSql, [assignedIds], (itemsErr, itemsResult) => {
     if (itemsErr) {
       console.error("Error deleting assigned items:", itemsErr);
       return callback(itemsErr);
     }
-    
+
     // Then delete from assigned_salesman_transfers
     const deleteTransferSql = `DELETE FROM assigned_salesman_transfers WHERE assigned_id IN (?)`;
-    
+
     db.query(deleteTransferSql, [assignedIds], (transferErr, transferResult) => {
       if (transferErr) {
         console.error("Error deleting assigned transfers:", transferErr);
         return callback(transferErr);
       }
-      
+
       console.log(`Deleted ${itemsResult.affectedRows} items and ${transferResult.affectedRows} transfers`);
-      callback(null, { 
+      callback(null, {
         deletedCount: itemsResult.affectedRows + transferResult.affectedRows,
         itemsDeleted: itemsResult.affectedRows,
         transfersDeleted: transferResult.affectedRows
@@ -605,7 +629,7 @@ exports.getProductsBySalesman = (salesman_id, from_stock_point_id, callback) => 
 
   const params = [salesman_id];
 
-  // ✅ Only return products assigned FROM the selected Active Stock Point
+  // Only return products assigned FROM the selected Active Stock Point
   if (from_stock_point_id) {
     sql += ` AND ast.from_stock_point_id = ? `;
     params.push(from_stock_point_id);
@@ -622,31 +646,81 @@ exports.getProductsBySalesman = (salesman_id, from_stock_point_id, callback) => 
   });
 };
 
-exports.getLastReceivedNumber = (callback) => {
+// ==================== UPDATE WEIGHT FOR ITEM (post-save edits) ====================
+exports.updateItemWeight = (item_id, weightData, callback) => {
+  const {
+    total_grams,
+    grams,
+    milligrams,
+    raw_text,
+    confidence
+  } = weightData;
+
   const sql = `
-    SELECT received_number FROM received_salesman_transfers 
-    ORDER BY received_id DESC 
-    LIMIT 1
+    UPDATE received_salesman_items 
+    SET 
+      weight_machine_reading = ?,
+      weight_machine_grams = ?,
+      weight_machine_milligrams = ?,
+      weight_machine_confidence = ?,
+      weight_machine_raw = ?,
+      weight_extracted_at = NOW()
+    WHERE item_id = ?
   `;
-  db.query(sql, (err, results) => {
+
+  const params = [
+    total_grams || 0,
+    grams || 0,
+    milligrams || 0,
+    confidence || 100,
+    raw_text || null,
+    item_id
+  ];
+
+  db.query(sql, params, (err, result) => {
     if (err) {
-      console.error("Error fetching last received number:", err);
+      console.error("Error updating item weight:", err);
       return callback(err);
     }
-    
-    // If no records exist, start with RCN001
-    if (results.length === 0) {
-      return callback(null, "RCN001");
-    }
-    
-    const lastNumber = results[0].received_number;
-    const match = lastNumber.match(/RCN(\d+)/);
-    if (match) {
-      const num = parseInt(match[1]) + 1;
-      const newNumber = `RCN${String(num).padStart(3, '0')}`;
-      callback(null, newNumber);
-    } else {
-      callback(null, "RCN001");
-    }
+    callback(null, { success: true, affectedRows: result.affectedRows });
   });
+};
+
+// ==================== GET ITEM WEIGHT ====================
+exports.getItemWeight = (item_id, callback) => {
+  const sql = `
+    SELECT 
+      item_id,
+      weight_machine_reading,
+      weight_machine_grams,
+      weight_machine_milligrams,
+      weight_machine_confidence,
+      weight_machine_raw,
+      weight_extracted_at
+    FROM received_salesman_items 
+    WHERE item_id = ?
+  `;
+  db.query(sql, [item_id], callback);
+};
+
+// ==================== GET ALL ITEMS WITH WEIGHT FOR RECEIVED ====================
+exports.getItemsWithWeightsByAssignment = (received_id, callback) => {
+  const sql = `
+    SELECT 
+      item_id,
+      product_id,
+      PCode_BarCode,
+      product_name,
+      gross_weight,
+      weight_machine_reading,
+      weight_machine_grams,
+      weight_machine_milligrams,
+      weight_machine_confidence,
+      weight_machine_raw,
+      weight_extracted_at
+    FROM received_salesman_items 
+    WHERE received_id = ?
+    ORDER BY item_id ASC
+  `;
+  db.query(sql, [received_id], callback);
 };

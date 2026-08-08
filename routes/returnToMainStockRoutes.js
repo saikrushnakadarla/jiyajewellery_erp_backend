@@ -11,4 +11,9 @@ router.delete("/delete-return-transfer/:return_id", returnToMainStockController.
 router.get("/lastReturnNumber", returnToMainStockController.getLastReturnNumber);
 router.put("/update-status/:return_id", returnToMainStockController.updateStatus);
 
+// Weight routes for items
+router.put("/update-item-weight/:item_id", returnToMainStockController.updateItemWeight);
+router.get("/get-item-weight/:item_id", returnToMainStockController.getItemWeight);
+router.get("/get-items-weights/:return_id", returnToMainStockController.getItemsWithWeightsByReturn);
+
 module.exports = router;

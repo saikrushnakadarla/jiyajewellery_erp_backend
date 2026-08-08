@@ -13,4 +13,10 @@ router.get("/get-salesmen", receivedSalesmanController.getSalesmen);
 router.put("/update-status/:transfer_id", receivedSalesmanController.updateStatus);
 router.get("/get-assigned-products-by-salesman", receivedSalesmanController.getAssignedProductsBySalesman);
 
+
+// Weight routes for items
+router.put("/update-item-weight/:item_id", receivedSalesmanController.updateItemWeight);
+router.get("/get-item-weight/:item_id", receivedSalesmanController.getItemWeight);
+router.get("/get-items-weights/:received_id", receivedSalesmanController.getItemsWithWeightsByAssignment);
+
 module.exports = router;

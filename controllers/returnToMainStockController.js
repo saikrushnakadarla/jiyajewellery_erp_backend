@@ -345,3 +345,95 @@ exports.getProductsByStockPoint = (req, res) => {
         res.json(results);
     });
 };
+
+
+// Add these functions at the bottom of the controller file
+
+// ==================== UPDATE ITEM WEIGHT ====================
+exports.updateItemWeight = (req, res) => {
+  const { item_id } = req.params;
+  const { 
+    total_grams, 
+    grams, 
+    milligrams, 
+    raw_text, 
+    confidence 
+  } = req.body;
+
+  if (!item_id) {
+    return res.status(400).json({ message: "Item ID is required" });
+  }
+
+  if (!total_grams && !grams && !milligrams) {
+    return res.status(400).json({ message: "At least one weight value is required" });
+  }
+
+  const weightData = {
+    total_grams: parseFloat(total_grams) || 0,
+    grams: parseInt(grams) || 0,
+    milligrams: parseInt(milligrams) || 0,
+    raw_text: raw_text || null,
+    confidence: parseInt(confidence) || 100
+  };
+
+  returnToMainStockModel.updateItemWeight(item_id, weightData, (err, result) => {
+    if (err) {
+      console.error("Error updating item weight:", err);
+      return res.status(500).json({ message: "Error updating item weight", error: err.message });
+    }
+
+    res.json({ 
+      success: true, 
+      message: "Weight updated successfully",
+      item_id: item_id,
+      weight_data: weightData
+    });
+  });
+};
+
+// ==================== GET ITEM WEIGHT ====================
+exports.getItemWeight = (req, res) => {
+  const { item_id } = req.params;
+
+  if (!item_id) {
+    return res.status(400).json({ message: "Item ID is required" });
+  }
+
+  returnToMainStockModel.getItemWeight(item_id, (err, results) => {
+    if (err) {
+      console.error("Error fetching item weight:", err);
+      return res.status(500).json({ message: "Error fetching item weight", error: err.message });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ message: "Item not found" });
+    }
+
+    res.json({ 
+      success: true, 
+      data: results[0]
+    });
+  });
+};
+
+// ==================== GET ALL ITEMS WITH WEIGHTS FOR RETURN ====================
+exports.getItemsWithWeightsByReturn = (req, res) => {
+  const { return_id } = req.params;
+
+  if (!return_id) {
+    return res.status(400).json({ message: "Return ID is required" });
+  }
+
+  returnToMainStockModel.getItemsWithWeightsByReturn(return_id, (err, results) => {
+    if (err) {
+      console.error("Error fetching items with weights:", err);
+      return res.status(500).json({ message: "Error fetching items", error: err.message });
+    }
+
+    res.json({ 
+      success: true, 
+      data: results,
+      count: results.length
+    });
+  });
+};

@@ -1,7 +1,7 @@
 const db = require("../db");
 
 // =============================================
-// INSERT: Save return to main stock with capture image
+// INSERT: Save return to main stock with capture image and weight fields
 // =============================================
 exports.insert = (
     return_data,
@@ -97,79 +97,95 @@ exports.insert = (
 
         const returnId = returnResult.insertId;
 
-        // UPDATED: Include cover_wt, card_wt, packing_wt in the INSERT
-const insertItemsSql = `
-    INSERT INTO return_to_main_stock_items (
-        return_id,
-        assigned_item_id,
-        product_id,
-        PCode_BarCode,
-        packet_barcode,
-        product_name,
-        metal_type,
-        purity,
-        category,
-        sub_category,
-        design_name,
-        qty,
-        gross_weight,
-        cover_wt,
-        card_wt,
-        packing_wt,
-        stone_weight,
-        net_weight,
-        rate,
-        making_charges,
-        stone_price,
-        total_price,
-        image,
-        remarks,
-        created_at
-    ) VALUES ?
-`;
+        // ===== FIXED: INSERT WITH ALL FIELDS INCLUDING WEIGHT FIELDS =====
+        const insertItemsSql = `
+            INSERT INTO return_to_main_stock_items (
+                return_id,
+                assigned_item_id,
+                product_id,
+                PCode_BarCode,
+                packet_barcode,
+                product_name,
+                metal_type,
+                purity,
+                category,
+                sub_category,
+                design_name,
+                qty,
+                gross_weight,
+                cover_wt,
+                card_wt,
+                packing_wt,
+                stone_weight,
+                net_weight,
+                rate,
+                making_charges,
+                stone_price,
+                total_price,
+                image,
+                remarks,
+                weight_machine_reading,
+                weight_machine_grams,
+                weight_machine_milligrams,
+                weight_machine_confidence,
+                weight_machine_raw,
+                weight_extracted_at,
+                created_at
+            ) VALUES ?
+        `;
 
-const itemValues = return_data.map(item => {
-    // Process image path
-    let imagePath = item.image || null;
-    if (imagePath && imagePath.startsWith('http')) {
-        const urlObj = new URL(imagePath);
-        imagePath = urlObj.pathname;
-    }
-    if (imagePath && !imagePath.startsWith('/') && !imagePath.startsWith('http')) {
-        imagePath = '/' + imagePath;
-    }
+        const itemValues = return_data.map(item => {
+            // Process image path
+            let imagePath = item.image || null;
+            if (imagePath && imagePath.startsWith('http')) {
+                const urlObj = new URL(imagePath);
+                imagePath = urlObj.pathname;
+            }
+            if (imagePath && !imagePath.startsWith('/') && !imagePath.startsWith('http')) {
+                imagePath = '/' + imagePath;
+            }
 
-    // Get packet_barcode from item
-    const packetBarcode = item.packet_barcode || null;
+            // Get packet_barcode from item
+            const packetBarcode = item.packet_barcode || null;
 
-    return [
-        returnId,
-        item.item_id || null,
-        item.product_id || null,
-        item.PCode_BarCode || null,
-        packetBarcode,
-        item.product_name || null,
-        item.metal_type || null,
-        item.purity || null,
-        item.category || null,
-        item.sub_category || null,
-        item.design_name || null,
-        parseFloat(item.qty) || 0,
-        parseFloat(item.gross_weight) || 0,
-        parseFloat(item.cover_wt) || 0,
-        parseFloat(item.card_wt) || 0,
-        parseFloat(item.packing_wt) || 0,
-        parseFloat(item.stone_weight) || 0,
-        parseFloat(item.net_weight) || 0,
-        parseFloat(item.rate) || 0,
-        parseFloat(item.making_charges) || 0,
-        parseFloat(item.stone_price) || 0,
-        parseFloat(item.total_price) || 0,
-        imagePath,
-        item.remarks || null,
-        new Date()
-    ];
-});
+            // Only set weight_extracted_at if weight data exists
+            const hasWeight = parseFloat(item.weight_machine_reading) > 0;
+
+            return [
+                returnId,
+                item.item_id || null,
+                item.product_id || null,
+                item.PCode_BarCode || null,
+                packetBarcode,
+                item.product_name || null,
+                item.metal_type || null,
+                item.purity || null,
+                item.category || null,
+                item.sub_category || null,
+                item.design_name || null,
+                parseFloat(item.qty) || 0,
+                parseFloat(item.gross_weight) || 0,
+                parseFloat(item.cover_wt) || 0,
+                parseFloat(item.card_wt) || 0,
+                parseFloat(item.packing_wt) || 0,
+                parseFloat(item.stone_weight) || 0,
+                parseFloat(item.net_weight) || 0,
+                parseFloat(item.rate) || 0,
+                parseFloat(item.making_charges) || 0,
+                parseFloat(item.stone_price) || 0,
+                parseFloat(item.total_price) || 0,
+                imagePath,
+                item.remarks || null,
+                // ===== WEIGHT FIELDS =====
+                parseFloat(item.weight_machine_reading) || 0,
+                parseInt(item.weight_machine_grams) || 0,
+                parseInt(item.weight_machine_milligrams) || 0,
+                parseInt(item.weight_machine_confidence) || 0,
+                item.weight_machine_raw || null,
+                hasWeight ? new Date() : null,
+                new Date() // created_at
+            ];
+        });
 
         db.query(insertItemsSql, [itemValues], (itemsErr) => {
             if (itemsErr) {
@@ -220,7 +236,7 @@ exports.getAll = (callback) => {
 };
 
 // =============================================
-// GET BY ID: Get return transfer by ID with packet_barcode
+// GET BY ID: Get return transfer by ID with all fields including weight
 // =============================================
 exports.getById = (return_id, callback) => {
     const mainSql = `
@@ -262,40 +278,45 @@ exports.getById = (return_id, callback) => {
             return callback(null, null);
         }
 
-        // UPDATED: Include packet_barcode in SELECT
-        // UPDATED: Include cover_wt, card_wt, packing_wt in SELECT
-const itemsSql = `
-    SELECT 
-        item_id,
-        return_id,
-        assigned_item_id,
-        product_id,
-        PCode_BarCode,
-        packet_barcode,
-        product_name,
-        metal_type,
-        purity,
-        category,
-        sub_category,
-        design_name,
-        qty,
-        gross_weight,
-        cover_wt,
-        card_wt,
-        packing_wt,
-        stone_weight,
-        net_weight,
-        rate,
-        making_charges,
-        stone_price,
-        total_price,
-        image,
-        remarks,
-        created_at
-    FROM return_to_main_stock_items
-    WHERE return_id = ?
-    ORDER BY item_id ASC
-`;
+        // ===== UPDATED: Include weight fields in SELECT =====
+        const itemsSql = `
+            SELECT 
+                item_id,
+                return_id,
+                assigned_item_id,
+                product_id,
+                PCode_BarCode,
+                packet_barcode,
+                product_name,
+                metal_type,
+                purity,
+                category,
+                sub_category,
+                design_name,
+                qty,
+                gross_weight,
+                cover_wt,
+                card_wt,
+                packing_wt,
+                stone_weight,
+                net_weight,
+                rate,
+                making_charges,
+                stone_price,
+                total_price,
+                image,
+                remarks,
+                weight_machine_reading,
+                weight_machine_grams,
+                weight_machine_milligrams,
+                weight_machine_confidence,
+                weight_machine_raw,
+                weight_extracted_at,
+                created_at
+            FROM return_to_main_stock_items
+            WHERE return_id = ?
+            ORDER BY item_id ASC
+        `;
 
         db.query(itemsSql, [return_id], (itemsErr, itemsResults) => {
             if (itemsErr) {
@@ -543,4 +564,83 @@ exports.getProductsByStockPoint = (stock_point_name, callback) => {
         }
         callback(null, results);
     });
+};
+
+// ==================== UPDATE WEIGHT FOR ITEM ====================
+exports.updateItemWeight = (item_id, weightData, callback) => {
+    const { 
+        total_grams, 
+        grams, 
+        milligrams, 
+        raw_text, 
+        confidence 
+    } = weightData;
+
+    const sql = `
+        UPDATE return_to_main_stock_items 
+        SET 
+            weight_machine_reading = ?,
+            weight_machine_grams = ?,
+            weight_machine_milligrams = ?,
+            weight_machine_confidence = ?,
+            weight_machine_raw = ?,
+            weight_extracted_at = NOW()
+        WHERE item_id = ?
+    `;
+
+    const params = [
+        total_grams || 0,
+        grams || 0,
+        milligrams || 0,
+        confidence || 100,
+        raw_text || null,
+        item_id
+    ];
+
+    db.query(sql, params, (err, result) => {
+        if (err) {
+            console.error("Error updating item weight:", err);
+            return callback(err);
+        }
+        callback(null, { success: true, affectedRows: result.affectedRows });
+    });
+};
+
+// ==================== GET ITEM WEIGHT ====================
+exports.getItemWeight = (item_id, callback) => {
+    const sql = `
+        SELECT 
+            item_id,
+            weight_machine_reading,
+            weight_machine_grams,
+            weight_machine_milligrams,
+            weight_machine_confidence,
+            weight_machine_raw,
+            weight_extracted_at
+        FROM return_to_main_stock_items 
+        WHERE item_id = ?
+    `;
+    db.query(sql, [item_id], callback);
+};
+
+// ==================== GET ALL ITEMS WITH WEIGHT FOR RETURN ====================
+exports.getItemsWithWeightsByReturn = (return_id, callback) => {
+    const sql = `
+        SELECT 
+            item_id,
+            product_id,
+            PCode_BarCode,
+            product_name,
+            gross_weight,
+            weight_machine_reading,
+            weight_machine_grams,
+            weight_machine_milligrams,
+            weight_machine_confidence,
+            weight_machine_raw,
+            weight_extracted_at
+        FROM return_to_main_stock_items 
+        WHERE return_id = ?
+        ORDER BY item_id ASC
+    `;
+    db.query(sql, [return_id], callback);
 };

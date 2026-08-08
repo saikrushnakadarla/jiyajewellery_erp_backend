@@ -671,12 +671,32 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST - Create new warehouse visit schedule with multiple barcodes and photo
-// POST - Create new warehouse visit schedule with multiple barcodes and photo (UPDATED)
+
 // POST - Create new warehouse visit schedule with multiple barcodes and photo
 router.post('/', upload.single('salesman_photo'), async (req, res) => {
   try {
-    const { customer_id, warehouse_id, barcodes, scheduled_date, salesman_id, salesman_name } = req.body;
-    const salesmanPhoto = req.file ? `/uploads/salesman-photos/${req.file.filename}` : null;
+    const { 
+      customer_id, 
+      warehouse_id, 
+      barcodes, 
+      scheduled_date, 
+      salesman_id, 
+      salesman_name,
+      salesman_photo_path // NEW: Accept photo path from account-details
+    } = req.body;
+    
+    // Determine which photo to use:
+    // 1. If a new file was uploaded, use it
+    // 2. Otherwise, use the photo path from account-details (if provided)
+    // 3. Otherwise, null
+    let salesmanPhoto = null;
+    if (req.file) {
+      salesmanPhoto = `/uploads/salesman-photos/${req.file.filename}`;
+      console.log('📸 New photo uploaded:', salesmanPhoto);
+    } else if (salesman_photo_path) {
+      salesmanPhoto = salesman_photo_path;
+      console.log('📸 Using profile photo from account-details:', salesmanPhoto);
+    }
     
     console.log('📝 Received data:', { 
       customer_id, 
@@ -770,10 +790,12 @@ router.post('/', upload.single('salesman_photo'), async (req, res) => {
     
     // Step 3: Validate salesman if provided
     let finalSalesmanName = salesman_name || null;
+    let salesmanPhotoToUse = salesmanPhoto;
+    
     if (salesmanIdInt) {
       console.log(`🔍 Checking salesman with account_id: ${salesmanIdInt}`);
       const salesman = await queryAsync(
-        'SELECT account_id, account_name, email FROM account_details WHERE account_id = ? AND account_group = ?',
+        'SELECT account_id, account_name, email, profile_photo FROM account_details WHERE account_id = ? AND account_group = ?',
         [salesmanIdInt, 'SALESMAN']
       );
       
@@ -785,6 +807,12 @@ router.post('/', upload.single('salesman_photo'), async (req, res) => {
         });
       }
       finalSalesmanName = salesman_name || salesman[0].account_name;
+      
+      // If no photo was provided in the request, try to use the salesman's profile photo from account-details
+      if (!salesmanPhotoToUse && salesman[0].profile_photo) {
+        salesmanPhotoToUse = salesman[0].profile_photo;
+        console.log(`📸 Using salesman profile photo from account-details: ${salesmanPhotoToUse}`);
+      }
       console.log(`✅ Salesman validated: ${finalSalesmanName}`);
     }
     
@@ -871,23 +899,23 @@ router.post('/', upload.single('salesman_photo'), async (req, res) => {
         `INSERT INTO visit_logs_warehouse_schedule 
          (customer_account_id, customer_id, warehouse_id, barcode, scheduled_date, salesman_id, salesman_name, salesman_photo, customer_status) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date, salesmanIdInt, finalSalesmanName, salesmanPhoto, 'Pending']
+        [customerIdInt, actualCustomerId, warehouseIdInt, barcode, scheduled_date, salesmanIdInt, finalSalesmanName, salesmanPhotoToUse, 'Pending']
       );
       insertedIds.push(result.insertId);
       console.log(`✅ Schedule inserted with ID: ${result.insertId} (customer_id: ${actualCustomerId}, salesman: ${finalSalesmanName || 'Not assigned'})`);
     }
     
-    // Send SINGLE notification and SINGLE email for ALL barcodes - PASS THE SCHEDULE IDS
+    // Send SINGLE notification and SINGLE email for ALL barcodes
     await createWarehouseScheduleNotification(
       customerIdInt, 
       warehouseIdInt, 
-      validBarcodes,  // Pass array of all barcodes
+      validBarcodes,
       scheduled_date, 
       salesmanIdInt, 
       finalSalesmanName,
-      barcodeDetails,  // Pass all barcode details
-      salesmanPhoto,
-      insertedIds  // Pass the inserted schedule IDs
+      barcodeDetails,
+      salesmanPhotoToUse,
+      insertedIds
     );
     
     res.status(201).json({ 
@@ -1124,12 +1152,33 @@ async function createWarehouseScheduleUpdateNotification(
 }
 
 // PUT - Update warehouse visit schedule with photo
-// PUT - Update warehouse visit schedule with photo (FIXED - uses proper PUT)
+// PUT - Update warehouse visit schedule with photo
 router.put('/:id', upload.single('salesman_photo'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { customer_id, warehouse_id, barcodes, scheduled_date, status, salesman_id, salesman_name } = req.body;
-    const salesmanPhoto = req.file ? `/uploads/salesman-photos/${req.file.filename}` : null;
+    const { 
+      customer_id, 
+      warehouse_id, 
+      barcodes, 
+      scheduled_date, 
+      status, 
+      salesman_id, 
+      salesman_name,
+      salesman_photo_path // NEW: Accept photo path from account-details
+    } = req.body;
+    
+    // Determine which photo to use:
+    // 1. If a new file was uploaded, use it
+    // 2. Otherwise, use the photo path from account-details (if provided)
+    // 3. Otherwise, fallback to existing photo
+    let newPhoto = null;
+    if (req.file) {
+      newPhoto = `/uploads/salesman-photos/${req.file.filename}`;
+      console.log('📸 New photo uploaded:', newPhoto);
+    } else if (salesman_photo_path) {
+      newPhoto = salesman_photo_path;
+      console.log('📸 Using profile photo from account-details:', newPhoto);
+    }
     
     console.log(`📝 Updating schedule ${id}:`, { 
       customer_id, 
@@ -1139,7 +1188,7 @@ router.put('/:id', upload.single('salesman_photo'), async (req, res) => {
       status, 
       salesman_id, 
       salesman_name,
-      salesmanPhoto 
+      newPhoto
     });
     
     // Parse barcodes from JSON string if present
@@ -1210,21 +1259,22 @@ router.put('/:id', upload.single('salesman_photo'), async (req, res) => {
     
     console.log(`📋 Found ${groupSchedules.length} schedules in this group to update`);
     
-    // Get the photo from the first schedule in the group
-    const firstSchedule = groupSchedules[0] || oldSchedule;
-    const photoToUse = salesmanPhoto || firstSchedule.salesman_photo;
+    // Determine which photo to use
+    let photoToUse = newPhoto || oldSchedule.salesman_photo;
     
-    // If new photo uploaded, delete all old photos in the group
-    if (salesmanPhoto) {
+    // If a new photo was uploaded or a photo path was provided, update all schedules in the group
+    if (newPhoto) {
+      // Delete all old photos in the group
       for (const schedule of groupSchedules) {
         if (schedule.salesman_photo) {
           const oldPhotoPath = path.join(__dirname, '..', schedule.salesman_photo);
-          if (fs.existsSync(oldPhotoPath)) {
+          if (fs.existsSync(oldPhotoPath) && schedule.salesman_photo !== newPhoto) {
             fs.unlinkSync(oldPhotoPath);
             console.log(`🗑️ Deleted old photo: ${schedule.salesman_photo}`);
           }
         }
       }
+      photoToUse = newPhoto;
     }
     
     // Validate customer exists
@@ -1269,7 +1319,7 @@ router.put('/:id', upload.single('salesman_photo'), async (req, res) => {
     let finalSalesmanName = salesman_name || null;
     if (salesmanIdInt) {
       const salesman = await queryAsync(
-        'SELECT account_id, account_name FROM account_details WHERE account_id = ? AND account_group = ?',
+        'SELECT account_id, account_name, profile_photo FROM account_details WHERE account_id = ? AND account_group = ?',
         [salesmanIdInt, 'SALESMAN']
       );
       
@@ -1280,6 +1330,12 @@ router.put('/:id', upload.single('salesman_photo'), async (req, res) => {
         });
       }
       finalSalesmanName = salesman_name || salesman[0].account_name;
+      
+      // If no photo was provided and the salesman has a profile photo, use it
+      if (!newPhoto && !salesman_photo_path && !photoToUse && salesman[0].profile_photo) {
+        photoToUse = salesman[0].profile_photo;
+        console.log(`📸 Using salesman profile photo from account-details for update: ${photoToUse}`);
+      }
     }
     
     // Delete ALL schedules in this group

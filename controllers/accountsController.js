@@ -127,7 +127,8 @@ const salesmanLogin = async (req, res) => {
                 account_status: salesman.account_status || 'active',
                 email_verified: 'Verified',
                 duty_start_time: salesman.duty_start_time,
-                duty_end_time: salesman.duty_end_time
+                duty_end_time: salesman.duty_end_time,
+                profile_photo: salesman.profile_photo || null
             };
 
             res.json({
@@ -172,7 +173,8 @@ const checkDutyHours = (req, res) => {
             duty_start_time: salesman.duty_start_time,
             duty_end_time: salesman.duty_end_time,
             full_name: salesman.full_name,
-            email_id: salesman.email
+            email_id: salesman.email,
+            profile_photo: salesman.profile_photo || null
         });
     });
 };
@@ -184,5 +186,5 @@ module.exports = {
     updateAccount,
     deleteAccount,
     salesmanLogin,
-    checkDutyHours  // Export new function
+    checkDutyHours
 };

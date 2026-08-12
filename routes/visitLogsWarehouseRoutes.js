@@ -2556,6 +2556,8 @@ router.put('/notifications/mark-all-read/:userId', async (req, res) => {
 
 
 // PUT - Update customer status for a schedule (Available/Not Available)
+// PUT - Update customer status for a schedule (Available/Not Available)
+// This will update ALL schedules with the same scheduled_date
 router.put('/:id/customer-status', async (req, res) => {
   try {
     const { id } = req.params;
@@ -2583,28 +2585,59 @@ router.put('/:id/customer-status', async (req, res) => {
       });
     }
     
-    // Update the customer_status
-    await queryAsync(
-      `UPDATE visit_logs_warehouse_schedule 
-       SET customer_status = ?, updated_at = NOW() 
-       WHERE id = ?`,
-      [customer_status, id]
+    const scheduleData = schedule[0];
+    
+    // Get ALL schedules for this customer with the same scheduled_date
+    // This ensures all products scheduled for the same date get updated together
+    const dateKey = new Date(scheduleData.scheduled_date).toISOString().split('T')[0];
+    
+    const relatedSchedules = await queryAsync(
+      `SELECT * FROM visit_logs_warehouse_schedule 
+       WHERE customer_account_id = ? 
+         AND DATE(scheduled_date) = ?
+         AND status = 'scheduled'
+       ORDER BY id ASC`,
+      [scheduleData.customer_account_id, dateKey]
     );
     
-    // If status is Not Available, we don't send notification yet (will be handled by reschedule)
-    // If status is Available, send notification
-    if (customer_status === 'Available') {
-      await createCustomerAvailabilityNotification(schedule[0], 'available');
+    console.log(`📋 Found ${relatedSchedules.length} schedules with the same scheduled_date (${dateKey})`);
+    
+    // Update ALL schedules in this group
+    if (relatedSchedules.length > 0) {
+      const ids = relatedSchedules.map(s => s.id);
+      const placeholders = ids.map(() => '?').join(',');
+      
+      await queryAsync(
+        `UPDATE visit_logs_warehouse_schedule 
+         SET customer_status = ?, updated_at = NOW() 
+         WHERE id IN (${placeholders})`,
+        [customer_status, ...ids]
+      );
+      
+      console.log(`✅ Updated ${ids.length} schedules to ${customer_status}:`, ids);
+    } else {
+      // Fallback: just update the single schedule
+      await queryAsync(
+        `UPDATE visit_logs_warehouse_schedule 
+         SET customer_status = ?, updated_at = NOW() 
+         WHERE id = ?`,
+        [customer_status, id]
+      );
+      console.log(`✅ Updated single schedule ${id} to ${customer_status}`);
     }
     
-    console.log(`✅ Customer status updated to ${customer_status} for schedule ${id}`);
+    // Send notification using the first schedule's data
+    if (customer_status === 'Available') {
+      await createCustomerAvailabilityNotification(scheduleData, 'available');
+    }
     
     res.json({
       success: true,
-      message: `Customer status updated to ${customer_status}`,
+      message: `${relatedSchedules.length || 1} schedule(s) updated to ${customer_status}`,
       data: {
-        id: id,
-        customer_status: customer_status
+        customer_status: customer_status,
+        updated_count: relatedSchedules.length || 1,
+        schedule_ids: relatedSchedules.map(s => s.id) || [id]
       }
     });
     
@@ -2618,6 +2651,8 @@ router.put('/:id/customer-status', async (req, res) => {
 });
 
 // PUT - Update customer status to Not Available with reschedule details
+// PUT - Update customer status to Not Available with reschedule details
+// This will update ALL schedules with the same scheduled_date
 router.put('/:id/not-available-reschedule', async (req, res) => {
   try {
     const { id } = req.params;
@@ -2645,30 +2680,69 @@ router.put('/:id/not-available-reschedule', async (req, res) => {
       });
     }
     
-    // Update the schedule with customer_status, reschedule_date, and reschedule_notes
-    await queryAsync(
-      `UPDATE visit_logs_warehouse_schedule 
-       SET customer_status = 'Not Available', 
-           reschedule_date = ?,
-           reschedule_notes = ?,
-           updated_at = NOW() 
-       WHERE id = ?`,
-      [reschedule_date, reschedule_notes || 'Customer requested reschedule', id]
+    const scheduleData = schedule[0];
+    
+    // Get ALL schedules for this customer with the same scheduled_date
+    const dateKey = new Date(scheduleData.scheduled_date).toISOString().split('T')[0];
+    
+    const relatedSchedules = await queryAsync(
+      `SELECT * FROM visit_logs_warehouse_schedule 
+       WHERE customer_account_id = ? 
+         AND DATE(scheduled_date) = ?
+         AND status = 'scheduled'
+       ORDER BY id ASC`,
+      [scheduleData.customer_account_id, dateKey]
     );
     
-    // Create notification for Not Available with reschedule
-    await createCustomerAvailabilityNotification(schedule[0], 'not_available', reschedule_date, reschedule_notes);
+    console.log(`📋 Found ${relatedSchedules.length} schedules with the same scheduled_date (${dateKey})`);
     
-    console.log(`✅ Schedule ${id} marked as Not Available with reschedule`);
+    // Update ALL schedules in this group
+    if (relatedSchedules.length > 0) {
+      const ids = relatedSchedules.map(s => s.id);
+      const placeholders = ids.map(() => '?').join(',');
+      
+      await queryAsync(
+        `UPDATE visit_logs_warehouse_schedule 
+         SET customer_status = 'Not Available', 
+             reschedule_date = ?,
+             reschedule_notes = ?,
+             updated_at = NOW() 
+         WHERE id IN (${placeholders})`,
+        [reschedule_date, reschedule_notes || 'Customer requested reschedule', ...ids]
+      );
+      
+      console.log(`✅ Updated ${ids.length} schedules to Not Available with reschedule:`, ids);
+    } else {
+      // Fallback: just update the single schedule
+      await queryAsync(
+        `UPDATE visit_logs_warehouse_schedule 
+         SET customer_status = 'Not Available', 
+             reschedule_date = ?,
+             reschedule_notes = ?,
+             updated_at = NOW() 
+         WHERE id = ?`,
+        [reschedule_date, reschedule_notes || 'Customer requested reschedule', id]
+      );
+      console.log(`✅ Updated single schedule ${id} to Not Available with reschedule`);
+    }
+    
+    // Create notification for Not Available with reschedule using the first schedule's data
+    await createCustomerAvailabilityNotification(
+      scheduleData, 
+      'not_available', 
+      reschedule_date, 
+      reschedule_notes
+    );
     
     res.json({
       success: true,
-      message: 'Customer marked as Not Available. Reschedule request sent.',
+      message: `${relatedSchedules.length || 1} schedule(s) marked as Not Available with reschedule`,
       data: {
-        id: id,
         customer_status: 'Not Available',
         reschedule_date: reschedule_date,
-        reschedule_notes: reschedule_notes
+        reschedule_notes: reschedule_notes,
+        updated_count: relatedSchedules.length || 1,
+        schedule_ids: relatedSchedules.map(s => s.id) || [id]
       }
     });
     
@@ -2680,6 +2754,7 @@ router.put('/:id/not-available-reschedule', async (req, res) => {
     });
   }
 });
+
 
 // Helper function for customer availability notification
 async function createCustomerAvailabilityNotification(scheduleData, status, rescheduleDate = null, rescheduleNotes = null) {

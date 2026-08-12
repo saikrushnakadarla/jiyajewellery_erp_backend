@@ -76,13 +76,45 @@ exports.insert = (
   let totalGrossWeight = 0;
   let totalNetWeight = 0;
 
+  // ===== CALCULATE TOTAL WEIGHT MACHINE READINGS =====
+  let totalWeightMachineReading = 0;
+  let totalWeightMachineGrams = 0;
+  let totalWeightMachineMilligrams = 0;
+  let totalWeightMachineConfidence = 0;
+  let hasWeightData = false;
+  let latestWeightExtractedAt = null;
+
   transfer_data.forEach(item => {
     totalQuantity += parseFloat(item.qty) || 0;
     totalGrossWeight += parseFloat(item.gross_weight) || 0;
     totalNetWeight += parseFloat(item.net_weight) || 0;
+
+    // Sum weight machine readings (take the first valid one as the total)
+    const weightReading = parseFloat(item.weight_machine_reading) || 0;
+    if (weightReading > 0) {
+      totalWeightMachineReading = weightReading; // Use the first valid weight as total
+      totalWeightMachineGrams = parseInt(item.weight_machine_grams) || 0;
+      totalWeightMachineMilligrams = parseInt(item.weight_machine_milligrams) || 0;
+      totalWeightMachineConfidence = parseInt(item.weight_machine_confidence) || 0;
+      hasWeightData = true;
+      latestWeightExtractedAt = new Date();
+    }
   });
 
-  // Insert main transfer record
+  // If multiple weights, use the first one as total (or sum if you prefer)
+  // If you want to SUM instead of using first, uncomment below:
+  // transfer_data.forEach(item => {
+  //   totalWeightMachineReading += parseFloat(item.weight_machine_reading) || 0;
+  //   totalWeightMachineGrams += parseInt(item.weight_machine_grams) || 0;
+  //   totalWeightMachineMilligrams += parseInt(item.weight_machine_milligrams) || 0;
+  //   totalWeightMachineConfidence += parseInt(item.weight_machine_confidence) || 0;
+  // });
+
+  const avgWeightMachineConfidence = totalItems > 0 && hasWeightData
+    ? Math.round(totalWeightMachineConfidence / totalItems)
+    : 0;
+
+  // Insert main transfer record with weight fields
   const insertTransferSql = `
     INSERT INTO received_salesman_transfers (
       received_number,
@@ -103,9 +135,15 @@ exports.insert = (
       stock_outward_type,
       stock_outward_packet_barcode,
       created_by,
+      weight_machine_reading,
+      weight_machine_grams,
+      weight_machine_milligrams,
+      weight_machine_confidence,
+      weight_machine_raw,
+      weight_extracted_at,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
   `;
 
   const transferParams = [
@@ -126,7 +164,13 @@ exports.insert = (
     stock_outward_gross_wt || null,
     stock_outward_type || null,
     stock_outward_packet_barcode || null,
-    created_by || null
+    created_by || null,
+    totalWeightMachineReading || 0,
+    totalWeightMachineGrams || 0,
+    totalWeightMachineMilligrams || 0,
+    avgWeightMachineConfidence || 0,
+    hasWeightData ? 'Weight captured from items' : null,
+    latestWeightExtractedAt
   ];
 
   db.query(insertTransferSql, transferParams, (err, transferResult) => {
@@ -137,7 +181,7 @@ exports.insert = (
 
     const receivedId = transferResult.insertId;
 
-    // ===== FIXED: INSERT now includes weight_machine_* columns =====
+    // Insert items with weight fields
     const insertItemsSql = `
       INSERT INTO received_salesman_items (
         received_id,
@@ -184,13 +228,7 @@ exports.insert = (
         imagePath = '/' + imagePath;
       }
 
-      // ===== FIXED: extract weight machine values sent from frontend =====
       const weightReading = parseFloat(item.weight_machine_reading) || 0;
-      const weightGrams = parseInt(item.weight_machine_grams) || 0;
-      const weightMilligrams = parseInt(item.weight_machine_milligrams) || 0;
-      const weightConfidence = parseInt(item.weight_machine_confidence) || 0;
-      const weightRaw = item.weight_machine_raw || null;
-      // Only stamp a timestamp if a weight was actually captured for this item
       const weightExtractedAt = weightReading > 0 ? new Date() : null;
 
       return [
@@ -218,12 +256,12 @@ exports.insert = (
         imagePath,
         item.remarks || null,
         weightReading,
-        weightGrams,
-        weightMilligrams,
-        weightConfidence,
-        weightRaw,
+        parseInt(item.weight_machine_grams) || 0,
+        parseInt(item.weight_machine_milligrams) || 0,
+        parseInt(item.weight_machine_confidence) || 0,
+        item.weight_machine_raw || null,
         weightExtractedAt,
-        new Date() // created_at
+        new Date()
       ];
     });
 
@@ -235,19 +273,17 @@ exports.insert = (
 
       console.log(`✅ Received ${received_number} saved with ${itemValues.length} items.`);
       console.log(`📷 Capture image: ${capture_image || 'None'}`);
-      console.log(`📦 StockOutWard Barcode: ${stock_outward_barcode || 'None'}`);
-      console.log(`📦 StockOutWard Gross WT: ${stock_outward_gross_wt || 'None'}`);
-      console.log(`📦 StockOutWard Type: ${stock_outward_type || 'None'}`);
-      console.log(`📦 StockOutWard Packet Barcode: ${stock_outward_packet_barcode || 'None'}`);
-      // Log a quick summary of how many items actually had weight captured
-      const weightedCount = itemValues.filter(v => v[22] > 0).length; // index 22 = weight_machine_reading
-      console.log(`⚖️  Items with captured weight: ${weightedCount}/${itemValues.length}`);
+      console.log(`⚖️ Total weight reading: ${totalWeightMachineReading}g`);
+      
       callback(null, { transfer_id: receivedId, transfer_number: received_number });
     });
   });
 };
 
+
+
 // GET ALL with capture_image and StockOutWard fields
+// GET ALL with weight fields
 exports.getAll = (callback) => {
   const sql = `
     SELECT 
@@ -272,6 +308,12 @@ exports.getAll = (callback) => {
       rst.created_by,
       rst.created_at,
       rst.updated_at,
+      rst.weight_machine_reading,
+      rst.weight_machine_grams,
+      rst.weight_machine_milligrams,
+      rst.weight_machine_confidence,
+      rst.weight_machine_raw,
+      rst.weight_extracted_at,
       ad.account_name as from_salesman_name,
       ad.mobile as salesman_mobile,
       sp.stock_point_name as to_stock_point_name
@@ -283,7 +325,7 @@ exports.getAll = (callback) => {
   db.query(sql, callback);
 };
 
-// GET BY ID with capture_image and StockOutWard fields
+// GET BY ID with weight fields
 exports.getById = (received_id, callback) => {
   const mainSql = `
     SELECT 
@@ -308,6 +350,12 @@ exports.getById = (received_id, callback) => {
       rst.created_by,
       rst.created_at,
       rst.updated_at,
+      rst.weight_machine_reading,
+      rst.weight_machine_grams,
+      rst.weight_machine_milligrams,
+      rst.weight_machine_confidence,
+      rst.weight_machine_raw,
+      rst.weight_extracted_at,
       ad.account_name as from_salesman_name,
       ad.mobile as salesman_mobile,
       sp.stock_point_name as to_stock_point_name
@@ -348,6 +396,7 @@ exports.getById = (received_id, callback) => {
     });
   });
 };
+
 
 exports.update = (received_id, status, remarks, callback) => {
   const sql = `

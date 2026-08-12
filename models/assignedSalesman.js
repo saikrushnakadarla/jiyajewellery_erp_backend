@@ -1,6 +1,7 @@
 const db = require("../db");
 
 // ==================== INSERT (Now saves as PENDING) ====================
+// ==================== INSERT (Now saves as PENDING) ====================
 exports.insert = (
   transfer_data,
   from_stock_point_id,
@@ -55,13 +56,26 @@ exports.insert = (
   let totalGrossWeight = 0;
   let totalNetWeight = 0;
   let totalPackingWt = 0;
+  let totalWeightMachineReading = 0;
+  let totalWeightMachineGrams = 0;
+  let totalWeightMachineMilligrams = 0;
+  let totalWeightMachineConfidence = 0;
 
   transfer_data.forEach(item => {
     totalQuantity += parseFloat(item.qty) || 0;
     totalGrossWeight += parseFloat(item.gross_weight) || 0;
     totalNetWeight += parseFloat(item.net_weight) || 0;
     totalPackingWt += parseFloat(item.packing_wt) || 0;
+    totalWeightMachineReading += parseFloat(item.weight_machine_reading) || 0;
+    totalWeightMachineGrams += parseInt(item.weight_machine_grams) || 0;
+    totalWeightMachineMilligrams += parseInt(item.weight_machine_milligrams) || 0;
+    totalWeightMachineConfidence += parseInt(item.weight_machine_confidence) || 0;
   });
+
+  // Calculate averages for confidence
+  const avgWeightMachineConfidence = totalItems > 0 
+    ? Math.round(totalWeightMachineConfidence / totalItems) 
+    : 0;
 
   const calculatedItemGrossTotal = totalGrossWeight;
   const calculatedPacketGrossTotal = totalGrossWeight + totalPackingWt;
@@ -94,15 +108,12 @@ exports.insert = (
       PCode_BarCode: item.PCode_BarCode,
       image: item.image || null,
       remarks: item.remarks || null,
-
-        // ===== FIX: carry weight-machine data into pending_data JSON =====
-        weight_machine_reading: parseFloat(item.weight_machine_reading) || 0,
-        weight_machine_grams: parseInt(item.weight_machine_grams) || 0,
-        weight_machine_milligrams: parseInt(item.weight_machine_milligrams) || 0,
-        weight_machine_confidence: parseInt(item.weight_machine_confidence) || 0,
-        weight_machine_raw: item.weight_machine_raw || null,
-
-
+      // Weight machine data - stored in pending data
+      weight_machine_reading: parseFloat(item.weight_machine_reading) || 0,
+      weight_machine_grams: parseInt(item.weight_machine_grams) || 0,
+      weight_machine_milligrams: parseInt(item.weight_machine_milligrams) || 0,
+      weight_machine_confidence: parseInt(item.weight_machine_confidence) || 0,
+      weight_machine_raw: item.weight_machine_raw || null,
     })),
     from_stock_point_id: from_stock_point_id,
     to_salesman_id: to_salesman_id,
@@ -121,7 +132,7 @@ exports.insert = (
     total_net_weight: totalNetWeight
   });
 
-  // Insert ONLY the header record with pending_data (NO items inserted yet)
+  // Insert the header record with pending_data and weight fields
   const insertTransferSql = `
     INSERT INTO assigned_salesman_transfers (
       assigned_number,
@@ -143,10 +154,25 @@ exports.insert = (
       capture_image,
       created_by,
       pending_data,
+      weight_machine_reading,
+      weight_machine_grams,
+      weight_machine_milligrams,
+      weight_machine_confidence,
+      weight_machine_raw,
+      weight_extracted_at,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
   `;
+
+  // Get the latest weight_extracted_at from items (if any have weights)
+  let latestWeightExtractedAt = null;
+  for (const item of transfer_data) {
+    if (item.weight_machine_reading && parseFloat(item.weight_machine_reading) > 0) {
+      latestWeightExtractedAt = new Date();
+      break;
+    }
+  }
 
   const transferParams = [
     assigned_number,
@@ -167,7 +193,14 @@ exports.insert = (
     remarks || null,
     capture_image || null,
     created_by || null,
-    pendingData
+    pendingData,
+    // Weight fields
+    totalWeightMachineReading || 0,
+    totalWeightMachineGrams || 0,
+    totalWeightMachineMilligrams || 0,
+    avgWeightMachineConfidence || 0,
+    null, // weight_machine_raw (we don't have a single raw value for the whole transfer)
+    latestWeightExtractedAt
   ];
 
   db.query(insertTransferSql, transferParams, (err, transferResult) => {
@@ -180,11 +213,13 @@ exports.insert = (
     
     console.log(`✅ Assignment ${assigned_number} saved as PENDING (ID: ${assignedId})`);
     console.log(`📦 ${totalItems} items pending approval`);
+    console.log(`📊 Total weight machine reading: ${totalWeightMachineReading}g`);
     
     callback(null, { transfer_id: assignedId, transfer_number: assigned_number });
   });
 };
 
+// ==================== APPROVE / ACCEPT ====================
 // ==================== APPROVE / ACCEPT ====================
 exports.approveAssignment = (assigned_id, callback) => {
   // First get the pending data
@@ -207,73 +242,70 @@ exports.approveAssignment = (assigned_id, callback) => {
       
       // Insert items into assigned_salesman_items
       const insertItemsSql = `
-  INSERT INTO assigned_salesman_items (
-    assigned_id,
-    product_id,
-    PCode_BarCode,
-    product_name,
-    metal_type,
-    purity,
-    category,
-    sub_category,
-    design_name,
-    qty,
-    gross_weight,
-    cover_wt,
-    card_wt,
-    packing_wt,
-    stone_weight,
-    net_weight,
-    rate,
-    making_charges,
-    stone_price,
-    total_price,
-    image,
-    remarks,
-    weight_machine_reading,
-    weight_machine_grams,
-    weight_machine_milligrams,
-    weight_machine_confidence,
-    weight_machine_raw,
-    weight_extracted_at,
-    created_at
-  ) VALUES ?
-`;
+        INSERT INTO assigned_salesman_items (
+          assigned_id,
+          product_id,
+          PCode_BarCode,
+          product_name,
+          metal_type,
+          purity,
+          category,
+          sub_category,
+          design_name,
+          qty,
+          gross_weight,
+          cover_wt,
+          card_wt,
+          packing_wt,
+          stone_weight,
+          net_weight,
+          rate,
+          making_charges,
+          stone_price,
+          total_price,
+          image,
+          remarks,
+          weight_machine_reading,
+          weight_machine_grams,
+          weight_machine_milligrams,
+          weight_machine_confidence,
+          weight_machine_raw,
+          weight_extracted_at,
+          created_at
+        ) VALUES ?
+      `;
 
-const itemValues = transferData.map(item => [
-  assigned_id,
-  item.product_id || null,
-  item.PCode_BarCode || null,
-  item.product_name || null,
-  item.metal_type || null,
-  item.purity || null,
-  item.category || null,
-  item.sub_category || null,
-  item.design_name || null,
-  parseFloat(item.qty) || 0,
-  parseFloat(item.gross_weight) || 0,
-  parseFloat(item.cover_wt) || 0,
-  parseFloat(item.card_wt) || 0,
-  parseFloat(item.packing_wt) || 0,
-  parseFloat(item.stone_weight) || 0,
-  parseFloat(item.net_weight) || 0,
-  parseFloat(item.rate) || 0,
-  parseFloat(item.making_charges) || 0,
-  parseFloat(item.stone_price) || 0,
-  parseFloat(item.total_price) || 0,
-  item.image || null,
-  item.remarks || null,
-
-  // ===== FIX: actually write weight-machine data into the table =====
-  parseFloat(item.weight_machine_reading) || 0,
-  parseInt(item.weight_machine_grams) || 0,
-  parseInt(item.weight_machine_milligrams) || 0,
-  parseInt(item.weight_machine_confidence) || 0,
-  item.weight_machine_raw || null,
-  item.weight_machine_reading ? new Date() : null,   // weight_extracted_at
-
-  new Date()  // created_at
-]);
+      const itemValues = transferData.map(item => [
+        assigned_id,
+        item.product_id || null,
+        item.PCode_BarCode || null,
+        item.product_name || null,
+        item.metal_type || null,
+        item.purity || null,
+        item.category || null,
+        item.sub_category || null,
+        item.design_name || null,
+        parseFloat(item.qty) || 0,
+        parseFloat(item.gross_weight) || 0,
+        parseFloat(item.cover_wt) || 0,
+        parseFloat(item.card_wt) || 0,
+        parseFloat(item.packing_wt) || 0,
+        parseFloat(item.stone_weight) || 0,
+        parseFloat(item.net_weight) || 0,
+        parseFloat(item.rate) || 0,
+        parseFloat(item.making_charges) || 0,
+        parseFloat(item.stone_price) || 0,
+        parseFloat(item.total_price) || 0,
+        item.image || null,
+        item.remarks || null,
+        parseFloat(item.weight_machine_reading) || 0,
+        parseInt(item.weight_machine_grams) || 0,
+        parseInt(item.weight_machine_milligrams) || 0,
+        parseInt(item.weight_machine_confidence) || 0,
+        item.weight_machine_raw || null,
+        item.weight_machine_reading ? new Date() : null,
+        new Date()
+      ]);
       
       db.query(insertItemsSql, [itemValues], (itemsErr) => {
         if (itemsErr) {
@@ -328,6 +360,7 @@ exports.rejectAssignment = (assigned_id, callback) => {
 };
 
 // ==================== GET PENDING ASSIGNMENTS ====================
+// ==================== GET PENDING ASSIGNMENTS ====================
 exports.getPendingAssignmentsBySalesman = (salesman_id, callback) => {
   const sql = `
     SELECT 
@@ -353,6 +386,12 @@ exports.getPendingAssignmentsBySalesman = (salesman_id, callback) => {
       ast.pending_data,
       ast.created_at,
       ast.updated_at,
+      ast.weight_machine_reading,
+      ast.weight_machine_grams,
+      ast.weight_machine_milligrams,
+      ast.weight_machine_confidence,
+      ast.weight_machine_raw,
+      ast.weight_extracted_at,
       sp.stock_point_name as from_stock_point_name,
       ad.account_name as to_salesman_name,
       ad.mobile as salesman_mobile
@@ -365,6 +404,7 @@ exports.getPendingAssignmentsBySalesman = (salesman_id, callback) => {
   db.query(sql, [salesman_id], callback);
 };
 
+// ==================== GET BY ID (with items from pending_data if not approved) ====================
 // ==================== GET BY ID (with items from pending_data if not approved) ====================
 exports.getById = (assigned_id, callback) => {
   const mainSql = `
@@ -391,6 +431,12 @@ exports.getById = (assigned_id, callback) => {
       ast.pending_data,
       ast.created_at,
       ast.updated_at,
+      ast.weight_machine_reading,
+      ast.weight_machine_grams,
+      ast.weight_machine_milligrams,
+      ast.weight_machine_confidence,
+      ast.weight_machine_raw,
+      ast.weight_extracted_at,
       sp.stock_point_name as from_stock_point_name,
       ad.account_name as to_salesman_name,
       ad.mobile as salesman_mobile
@@ -453,6 +499,7 @@ exports.getById = (assigned_id, callback) => {
 };
 
 // ==================== GET ALL ====================
+// ==================== GET ALL ====================
 exports.getAll = (callback) => {
   const sql = `
     SELECT 
@@ -477,6 +524,12 @@ exports.getAll = (callback) => {
       ast.created_by,
       ast.created_at,
       ast.updated_at,
+      ast.weight_machine_reading,
+      ast.weight_machine_grams,
+      ast.weight_machine_milligrams,
+      ast.weight_machine_confidence,
+      ast.weight_machine_raw,
+      ast.weight_extracted_at,
       sp.stock_point_name as from_stock_point_name,
       ad.account_name as to_salesman_name,
       ad.mobile as salesman_mobile

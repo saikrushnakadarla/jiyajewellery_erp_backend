@@ -3,6 +3,9 @@ const db = require("../db");
 // =============================================
 // INSERT: Save return to main stock with capture image and weight fields
 // =============================================
+// =============================================
+// INSERT: Save return to main stock with capture image and weight fields
+// =============================================
 exports.insert = (
     return_data,
     from_stock_point_id,
@@ -44,13 +47,36 @@ exports.insert = (
     let totalGrossWeight = 0;
     let totalNetWeight = 0;
 
+    // ===== CALCULATE TOTAL WEIGHT MACHINE READINGS =====
+    let totalWeightMachineReading = 0;
+    let totalWeightMachineGrams = 0;
+    let totalWeightMachineMilligrams = 0;
+    let totalWeightMachineConfidence = 0;
+    let hasWeightData = false;
+    let latestWeightExtractedAt = null;
+
     return_data.forEach(item => {
         totalQuantity += parseFloat(item.qty) || 0;
         totalGrossWeight += parseFloat(item.gross_weight) || 0;
         totalNetWeight += parseFloat(item.net_weight) || 0;
+
+        // Sum weight machine readings (or use first valid)
+        const weightReading = parseFloat(item.weight_machine_reading) || 0;
+        if (weightReading > 0) {
+            totalWeightMachineReading = weightReading; // Use first valid weight as total
+            totalWeightMachineGrams = parseInt(item.weight_machine_grams) || 0;
+            totalWeightMachineMilligrams = parseInt(item.weight_machine_milligrams) || 0;
+            totalWeightMachineConfidence = parseInt(item.weight_machine_confidence) || 0;
+            hasWeightData = true;
+            latestWeightExtractedAt = new Date();
+        }
     });
 
-    // Insert main return record with capture_image column
+    const avgWeightMachineConfidence = totalItems > 0 && hasWeightData
+        ? Math.round(totalWeightMachineConfidence / totalItems)
+        : 0;
+
+    // Insert main return record with capture_image and weight fields
     const insertReturnSql = `
         INSERT INTO return_to_main_stock_transfers (
             return_number,
@@ -67,9 +93,15 @@ exports.insert = (
             remarks,
             capture_image,
             created_by,
+            weight_machine_reading,
+            weight_machine_grams,
+            weight_machine_milligrams,
+            weight_machine_confidence,
+            weight_machine_raw,
+            weight_extracted_at,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
     `;
 
     const returnParams = [
@@ -86,7 +118,13 @@ exports.insert = (
         'completed',
         remarks || null,
         capture_image || null,
-        created_by || null
+        created_by || null,
+        totalWeightMachineReading || 0,
+        totalWeightMachineGrams || 0,
+        totalWeightMachineMilligrams || 0,
+        avgWeightMachineConfidence || 0,
+        hasWeightData ? `Total: ${totalWeightMachineReading}g` : null,
+        latestWeightExtractedAt
     ];
 
     db.query(insertReturnSql, returnParams, (err, returnResult) => {
@@ -97,7 +135,7 @@ exports.insert = (
 
         const returnId = returnResult.insertId;
 
-        // ===== FIXED: INSERT WITH ALL FIELDS INCLUDING WEIGHT FIELDS =====
+        // Insert items with all fields including weight fields
         const insertItemsSql = `
             INSERT INTO return_to_main_stock_items (
                 return_id,
@@ -145,11 +183,9 @@ exports.insert = (
                 imagePath = '/' + imagePath;
             }
 
-            // Get packet_barcode from item
             const packetBarcode = item.packet_barcode || null;
-
-            // Only set weight_extracted_at if weight data exists
-            const hasWeight = parseFloat(item.weight_machine_reading) > 0;
+            const weightReading = parseFloat(item.weight_machine_reading) || 0;
+            const weightExtractedAt = weightReading > 0 ? new Date() : null;
 
             return [
                 returnId,
@@ -176,14 +212,13 @@ exports.insert = (
                 parseFloat(item.total_price) || 0,
                 imagePath,
                 item.remarks || null,
-                // ===== WEIGHT FIELDS =====
-                parseFloat(item.weight_machine_reading) || 0,
+                weightReading,
                 parseInt(item.weight_machine_grams) || 0,
                 parseInt(item.weight_machine_milligrams) || 0,
                 parseInt(item.weight_machine_confidence) || 0,
                 item.weight_machine_raw || null,
-                hasWeight ? new Date() : null,
-                new Date() // created_at
+                weightExtractedAt,
+                new Date()
             ];
         });
 
@@ -195,13 +230,14 @@ exports.insert = (
             
             console.log(`✅ Return ${return_number} saved with ${itemValues.length} items.`);
             console.log(`📷 Capture image: ${capture_image || 'None'}`);
+            console.log(`⚖️ Total weight reading: ${totalWeightMachineReading}g`);
             callback(null, { return_id: returnId, return_number: return_number });
         });
     });
 };
 
 // =============================================
-// GET ALL: Get all return transfers with capture_image
+// GET ALL: Get all return transfers with weight fields
 // =============================================
 exports.getAll = (callback) => {
     const sql = `
@@ -223,6 +259,12 @@ exports.getAll = (callback) => {
             rt.created_by,
             rt.created_at,
             rt.updated_at,
+            rt.weight_machine_reading,
+            rt.weight_machine_grams,
+            rt.weight_machine_milligrams,
+            rt.weight_machine_confidence,
+            rt.weight_machine_raw,
+            rt.weight_extracted_at,
             sp1.stock_point_name as from_stock_point_name,
             sp2.stock_point_name as to_stock_point_name,
             ad.account_name as from_user_name
@@ -258,6 +300,12 @@ exports.getById = (return_id, callback) => {
             rt.created_by,
             rt.created_at,
             rt.updated_at,
+            rt.weight_machine_reading,
+            rt.weight_machine_grams,
+            rt.weight_machine_milligrams,
+            rt.weight_machine_confidence,
+            rt.weight_machine_raw,
+            rt.weight_extracted_at,
             sp1.stock_point_name as from_stock_point_name,
             sp2.stock_point_name as to_stock_point_name,
             ad.account_name as from_user_name
@@ -278,7 +326,6 @@ exports.getById = (return_id, callback) => {
             return callback(null, null);
         }
 
-        // ===== UPDATED: Include weight fields in SELECT =====
         const itemsSql = `
             SELECT 
                 item_id,

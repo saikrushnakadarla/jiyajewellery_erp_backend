@@ -15,6 +15,7 @@ exports.insert = (
   stock_outward_gross_wt = null,
   stock_outward_type = null,
   stock_outward_packet_barcode = null,
+  capture_weight_of_bag = 0, // NEW
   callback
 ) => {
   // Handle optional parameters
@@ -27,6 +28,7 @@ exports.insert = (
     stock_outward_gross_wt = null;
     stock_outward_type = null;
     stock_outward_packet_barcode = null;
+    capture_weight_of_bag = 0;
   }
   if (typeof to_user_id === 'function' && callback) {
     callback = to_user_id;
@@ -36,6 +38,7 @@ exports.insert = (
     stock_outward_gross_wt = null;
     stock_outward_type = null;
     stock_outward_packet_barcode = null;
+    capture_weight_of_bag = 0;
   }
   if (typeof capture_image === 'function' && callback) {
     callback = capture_image;
@@ -44,6 +47,7 @@ exports.insert = (
     stock_outward_gross_wt = null;
     stock_outward_type = null;
     stock_outward_packet_barcode = null;
+    capture_weight_of_bag = 0;
   }
   if (typeof stock_outward_barcode === 'function' && callback) {
     callback = stock_outward_barcode;
@@ -51,17 +55,20 @@ exports.insert = (
     stock_outward_gross_wt = null;
     stock_outward_type = null;
     stock_outward_packet_barcode = null;
+    capture_weight_of_bag = 0;
   }
   if (typeof stock_outward_gross_wt === 'function' && callback) {
     callback = stock_outward_gross_wt;
     stock_outward_gross_wt = null;
     stock_outward_type = null;
     stock_outward_packet_barcode = null;
+    capture_weight_of_bag = 0;
   }
   if (typeof stock_outward_type === 'function' && callback) {
     callback = stock_outward_type;
     stock_outward_type = null;
     stock_outward_packet_barcode = null;
+    capture_weight_of_bag = 0;
   }
 
   if (!Array.isArray(transfer_data) || transfer_data.length === 0) {
@@ -101,20 +108,11 @@ exports.insert = (
     }
   });
 
-  // If multiple weights, use the first one as total (or sum if you prefer)
-  // If you want to SUM instead of using first, uncomment below:
-  // transfer_data.forEach(item => {
-  //   totalWeightMachineReading += parseFloat(item.weight_machine_reading) || 0;
-  //   totalWeightMachineGrams += parseInt(item.weight_machine_grams) || 0;
-  //   totalWeightMachineMilligrams += parseInt(item.weight_machine_milligrams) || 0;
-  //   totalWeightMachineConfidence += parseInt(item.weight_machine_confidence) || 0;
-  // });
-
   const avgWeightMachineConfidence = totalItems > 0 && hasWeightData
     ? Math.round(totalWeightMachineConfidence / totalItems)
     : 0;
 
-  // Insert main transfer record with weight fields
+  // Insert main transfer record with weight fields and capture_weight_of_bag
   const insertTransferSql = `
     INSERT INTO received_salesman_transfers (
       received_number,
@@ -141,9 +139,10 @@ exports.insert = (
       weight_machine_confidence,
       weight_machine_raw,
       weight_extracted_at,
+      capture_weight_of_bag, -- NEW
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
   `;
 
   const transferParams = [
@@ -170,7 +169,8 @@ exports.insert = (
     totalWeightMachineMilligrams || 0,
     avgWeightMachineConfidence || 0,
     hasWeightData ? 'Weight captured from items' : null,
-    latestWeightExtractedAt
+    latestWeightExtractedAt,
+    parseFloat(capture_weight_of_bag) || 0, // NEW
   ];
 
   db.query(insertTransferSql, transferParams, (err, transferResult) => {
@@ -274,11 +274,13 @@ exports.insert = (
       console.log(`✅ Received ${received_number} saved with ${itemValues.length} items.`);
       console.log(`📷 Capture image: ${capture_image || 'None'}`);
       console.log(`⚖️ Total weight reading: ${totalWeightMachineReading}g`);
+      console.log(`📦 Capture Weight of Bag: ${parseFloat(capture_weight_of_bag) || 0}g`);
       
       callback(null, { transfer_id: receivedId, transfer_number: received_number });
     });
   });
 };
+
 
 
 
@@ -314,6 +316,7 @@ exports.getAll = (callback) => {
       rst.weight_machine_confidence,
       rst.weight_machine_raw,
       rst.weight_extracted_at,
+      rst.capture_weight_of_bag,  
       ad.account_name as from_salesman_name,
       ad.mobile as salesman_mobile,
       sp.stock_point_name as to_stock_point_name
@@ -356,6 +359,7 @@ exports.getById = (received_id, callback) => {
       rst.weight_machine_confidence,
       rst.weight_machine_raw,
       rst.weight_extracted_at,
+       rst.capture_weight_of_bag,
       ad.account_name as from_salesman_name,
       ad.mobile as salesman_mobile,
       sp.stock_point_name as to_stock_point_name

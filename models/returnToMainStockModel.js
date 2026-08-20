@@ -1,10 +1,7 @@
 const db = require("../db");
 
 // =============================================
-// INSERT: Save return to main stock with capture image and weight fields
-// =============================================
-// =============================================
-// INSERT: Save return to main stock with capture image and weight fields
+// INSERT: Save return to main stock with capture image, packet_barcode, capture_weight_of_bag, and barcode_status
 // =============================================
 exports.insert = (
     return_data,
@@ -17,6 +14,7 @@ exports.insert = (
     from_user_id = null,
     to_user_id = null,
     capture_image = null,
+    capture_weight_of_bag = 0, // NEW
     callback
 ) => {
     if (typeof from_user_id === 'function') {
@@ -24,15 +22,18 @@ exports.insert = (
         from_user_id = null;
         to_user_id = null;
         capture_image = null;
+        capture_weight_of_bag = 0;
     }
     if (typeof to_user_id === 'function' && callback) {
         callback = to_user_id;
         to_user_id = null;
         capture_image = null;
+        capture_weight_of_bag = 0;
     }
     if (typeof capture_image === 'function' && callback) {
         callback = capture_image;
         capture_image = null;
+        capture_weight_of_bag = 0;
     }
 
     if (!Array.isArray(return_data) || return_data.length === 0) {
@@ -54,11 +55,20 @@ exports.insert = (
     let totalWeightMachineConfidence = 0;
     let hasWeightData = false;
     let latestWeightExtractedAt = null;
+    let packetBarcodeFromItems = null;
+    
+    // ===== CRITICAL FIX: Always set to 'Unselected' at transfer level =====
+    const overallBarcodeStatus = 'Unselected';
 
     return_data.forEach(item => {
         totalQuantity += parseFloat(item.qty) || 0;
         totalGrossWeight += parseFloat(item.gross_weight) || 0;
         totalNetWeight += parseFloat(item.net_weight) || 0;
+
+        // Capture packet_barcode from first item that has one
+        if (!packetBarcodeFromItems && item.packet_barcode) {
+            packetBarcodeFromItems = item.packet_barcode;
+        }
 
         // Sum weight machine readings (or use first valid)
         const weightReading = parseFloat(item.weight_machine_reading) || 0;
@@ -76,7 +86,7 @@ exports.insert = (
         ? Math.round(totalWeightMachineConfidence / totalItems)
         : 0;
 
-    // Insert main return record with capture_image and weight fields
+    // Insert main return record with capture_image, packet_barcode, barcode_status, capture_weight_of_bag, and weight fields
     const insertReturnSql = `
         INSERT INTO return_to_main_stock_transfers (
             return_number,
@@ -92,6 +102,8 @@ exports.insert = (
             status,
             remarks,
             capture_image,
+            packet_barcode,
+            barcode_status,
             created_by,
             weight_machine_reading,
             weight_machine_grams,
@@ -99,9 +111,10 @@ exports.insert = (
             weight_machine_confidence,
             weight_machine_raw,
             weight_extracted_at,
+            capture_weight_of_bag, -- NEW
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
     `;
 
     const returnParams = [
@@ -118,13 +131,16 @@ exports.insert = (
         'completed',
         remarks || null,
         capture_image || null,
+        packetBarcodeFromItems || null,
+        overallBarcodeStatus,
         created_by || null,
         totalWeightMachineReading || 0,
         totalWeightMachineGrams || 0,
         totalWeightMachineMilligrams || 0,
         avgWeightMachineConfidence || 0,
         hasWeightData ? `Total: ${totalWeightMachineReading}g` : null,
-        latestWeightExtractedAt
+        latestWeightExtractedAt,
+        parseFloat(capture_weight_of_bag) || 0, // NEW
     ];
 
     db.query(insertReturnSql, returnParams, (err, returnResult) => {
@@ -135,7 +151,7 @@ exports.insert = (
 
         const returnId = returnResult.insertId;
 
-        // Insert items with all fields including weight fields
+        // Insert items with all fields including weight fields and barcode_status
         const insertItemsSql = `
             INSERT INTO return_to_main_stock_items (
                 return_id,
@@ -143,6 +159,7 @@ exports.insert = (
                 product_id,
                 PCode_BarCode,
                 packet_barcode,
+                barcode_status,
                 product_name,
                 metal_type,
                 purity,
@@ -184,6 +201,9 @@ exports.insert = (
             }
 
             const packetBarcode = item.packet_barcode || null;
+            // ===== CRITICAL FIX: Always set barcode_status to 'Unselected' =====
+            const barcodeStatus = 'Unselected';
+            
             const weightReading = parseFloat(item.weight_machine_reading) || 0;
             const weightExtractedAt = weightReading > 0 ? new Date() : null;
 
@@ -193,6 +213,7 @@ exports.insert = (
                 item.product_id || null,
                 item.PCode_BarCode || null,
                 packetBarcode,
+                barcodeStatus,
                 item.product_name || null,
                 item.metal_type || null,
                 item.purity || null,
@@ -230,14 +251,19 @@ exports.insert = (
             
             console.log(`✅ Return ${return_number} saved with ${itemValues.length} items.`);
             console.log(`📷 Capture image: ${capture_image || 'None'}`);
+            console.log(`📦 Packet barcode: ${packetBarcodeFromItems || 'None'}`);
+            console.log(`📊 Overall barcode status: ${overallBarcodeStatus} (FIXED: Always Unselected)`);
+            console.log(`📊 Item barcode status: Always Unselected (FIXED)`);
             console.log(`⚖️ Total weight reading: ${totalWeightMachineReading}g`);
+            console.log(`📦 Capture Weight of Bag: ${parseFloat(capture_weight_of_bag) || 0}g`);
             callback(null, { return_id: returnId, return_number: return_number });
         });
     });
 };
 
+
 // =============================================
-// GET ALL: Get all return transfers with weight fields
+// GET ALL: Get all return transfers with packet_barcode and barcode_status
 // =============================================
 exports.getAll = (callback) => {
     const sql = `
@@ -256,6 +282,8 @@ exports.getAll = (callback) => {
             rt.status,
             rt.remarks,
             rt.capture_image,
+            rt.packet_barcode,
+            rt.barcode_status,
             rt.created_by,
             rt.created_at,
             rt.updated_at,
@@ -278,7 +306,7 @@ exports.getAll = (callback) => {
 };
 
 // =============================================
-// GET BY ID: Get return transfer by ID with all fields including weight
+// GET BY ID: Get return transfer by ID with packet_barcode and barcode_status
 // =============================================
 exports.getById = (return_id, callback) => {
     const mainSql = `
@@ -297,6 +325,8 @@ exports.getById = (return_id, callback) => {
             rt.status,
             rt.remarks,
             rt.capture_image,
+            rt.packet_barcode,
+            rt.barcode_status,
             rt.created_by,
             rt.created_at,
             rt.updated_at,
@@ -334,6 +364,7 @@ exports.getById = (return_id, callback) => {
                 product_id,
                 PCode_BarCode,
                 packet_barcode,
+                barcode_status,
                 product_name,
                 metal_type,
                 purity,
@@ -596,7 +627,10 @@ exports.getProductsByStockPoint = (stock_point_name, callback) => {
             ote.Status,
             ote.Stock_Point,
             ote.user_id,
-            ote.image
+            ote.image,
+            ote.Cover_Wt,
+            ote.Card_Wt,
+            ote.Packing_Wt
         FROM opening_tags_entry ote
         WHERE ote.Stock_Point = ?
             AND ote.Status = 'Selected'
@@ -677,6 +711,8 @@ exports.getItemsWithWeightsByReturn = (return_id, callback) => {
             item_id,
             product_id,
             PCode_BarCode,
+            packet_barcode,
+            barcode_status,
             product_name,
             gross_weight,
             weight_machine_reading,
@@ -690,4 +726,165 @@ exports.getItemsWithWeightsByReturn = (return_id, callback) => {
         ORDER BY item_id ASC
     `;
     db.query(sql, [return_id], callback);
+};
+
+// ==================== GET ITEMS BY BARCODE STATUS ====================
+exports.getItemsByBarcodeStatus = (status, callback) => {
+    const sql = `
+        SELECT 
+            ri.*,
+            rt.return_number,
+            rt.return_date,
+            rt.from_stock_point_id,
+            rt.from_user_id,
+            rt.barcode_status as transfer_barcode_status
+        FROM return_to_main_stock_items ri
+        LEFT JOIN return_to_main_stock_transfers rt ON ri.return_id = rt.return_id
+        WHERE ri.barcode_status = ?
+        ORDER BY ri.created_at DESC
+    `;
+    db.query(sql, [status], callback);
+};
+
+// ==================== GET ITEMS WITH PACKET BARCODE ====================
+exports.getItemsWithPacketBarcode = (packet_barcode, callback) => {
+    const sql = `
+        SELECT 
+            ri.*,
+            rt.return_number,
+            rt.return_date,
+            rt.from_stock_point_id,
+            rt.from_user_id,
+            rt.barcode_status as transfer_barcode_status
+        FROM return_to_main_stock_items ri
+        LEFT JOIN return_to_main_stock_transfers rt ON ri.return_id = rt.return_id
+        WHERE ri.packet_barcode = ?
+        ORDER BY ri.created_at DESC
+    `;
+    db.query(sql, [packet_barcode], callback);
+};
+
+// =============================================
+// PACKET BARCODE FUNCTIONS FOR RETURN TO MAIN STOCK
+// =============================================
+
+// Search packet by QR code/barcode
+// Search packet by QR code/barcode
+exports.searchPacketByQRCode = (qrCode, callback) => {
+    // Try multiple search methods:
+    // 1. Direct match on qr_code column (JSON string)
+    // 2. JSON contains the barcode
+    // 3. Concatenation of prefix + qr_number matches
+    const sql = `
+        SELECT 
+            id, 
+            prefix, 
+            packet_wt, 
+            qr_code, 
+            status, 
+            created_at, 
+            updated_at 
+        FROM qr_packets 
+        WHERE qr_code = ? 
+           OR qr_code LIKE ?
+           OR CONCAT(prefix, qr_number) = ?
+           OR prefix = ? AND qr_number = ?
+        ORDER BY id DESC 
+        LIMIT 1
+    `;
+    
+    const searchPattern = `%"qr_code":"${qrCode}"%`;
+    
+    // Extract prefix and number if possible
+    let prefix = null;
+    let number = null;
+    const prefixMatch = qrCode.match(/^([A-Z]+)/);
+    const numberMatch = qrCode.match(/(\d+)$/);
+    if (prefixMatch) prefix = prefixMatch[1];
+    if (numberMatch) number = numberMatch[1];
+    
+    db.query(
+        sql, 
+        [qrCode, searchPattern, qrCode, prefix, number], 
+        (err, results) => {
+            if (err) {
+                console.error("Error searching packet by QR code:", err);
+                return callback(err);
+            }
+            
+            if (results.length === 0) {
+                return callback(null, null);
+            }
+            
+            callback(null, results[0]);
+        }
+    );
+};
+
+// Create new packet
+exports.createPacket = (packetData, callback) => {
+    const { prefix, packet_wt, qr_code, status = 'Active' } = packetData;
+    
+    const sql = `
+        INSERT INTO qr_packets (
+            prefix, 
+            packet_wt, 
+            qr_code, 
+            status, 
+            created_at, 
+            updated_at
+        ) VALUES (?, ?, ?, ?, NOW(), NOW())
+    `;
+    
+    db.query(sql, [prefix, packet_wt, qr_code, status], (err, result) => {
+        if (err) {
+            console.error("Error creating packet:", err);
+            return callback(err);
+        }
+        
+        callback(null, result);
+    });
+};
+
+// Update packet status
+exports.updatePacketStatus = (id, status, callback) => {
+    const sql = `
+        UPDATE qr_packets 
+        SET status = ?, updated_at = NOW() 
+        WHERE id = ?
+    `;
+    
+    db.query(sql, [status, id], (err, result) => {
+        if (err) {
+            console.error("Error updating packet status:", err);
+            return callback(err);
+        }
+        
+        callback(null, result);
+    });
+};
+
+// Get all packets
+exports.getAllPackets = (callback) => {
+    const sql = `
+        SELECT 
+            id, 
+            prefix, 
+            packet_wt, 
+            qr_code, 
+            status, 
+            created_at, 
+            updated_at 
+        FROM qr_packets 
+        ORDER BY created_at DESC
+    `;
+    
+    db.query(sql, (err, results) => {
+        if (err) {
+            console.error("Error fetching all packets:", err);
+            return callback(err);
+        }
+        
+        callback(null, results);
+    });
 };

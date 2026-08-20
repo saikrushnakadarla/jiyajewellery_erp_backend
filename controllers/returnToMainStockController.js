@@ -88,7 +88,9 @@ exports.saveReturnToMainStock = (req, res) => {
             from_user_id,
             to_user_id,
             assigned_ids = [],
-            capture_image
+            capture_image,
+            packet_barcode,
+            capture_weight_of_bag // NEW
         } = req.body;
 
         if (!return_data || !Array.isArray(return_data) || return_data.length === 0) {
@@ -102,6 +104,7 @@ exports.saveReturnToMainStock = (req, res) => {
         // Determine return number
         const return_number = reference_number || generateReturnNumber();
         console.log(`📦 Processing return: ${return_number}`);
+        console.log(`📦 Capture Weight of Bag: ${capture_weight_of_bag || 0}`);
 
         // --- Process capture image (single image for the whole transfer) ---
         let savedCaptureImagePath = null;
@@ -134,7 +137,7 @@ exports.saveReturnToMainStock = (req, res) => {
             return processedItem;
         });
 
-        // Insert return records with capture image
+        // Insert return records with capture image, packet_barcode, and capture_weight_of_bag
         returnToMainStockModel.insert(
             processedReturnData,
             from_stock_point_id,
@@ -146,6 +149,7 @@ exports.saveReturnToMainStock = (req, res) => {
             from_user_id,
             to_user_id,
             savedCaptureImagePath,
+            capture_weight_of_bag, // NEW
             (err, result) => {
                 if (err) {
                     console.error("Database error:", err);
@@ -175,6 +179,8 @@ exports.saveReturnToMainStock = (req, res) => {
                                         return_id: result.return_id,
                                         return_number: result.return_number,
                                         capture_image: savedCaptureImagePath,
+                                        packet_barcode: packet_barcode || null,
+                                        capture_weight_of_bag: capture_weight_of_bag || 0,
                                         items_updated: updateResult?.updatedCount || 0,
                                         records_deleted: deleteResult?.deletedCount || 0
                                     });
@@ -185,6 +191,8 @@ exports.saveReturnToMainStock = (req, res) => {
                                     return_id: result.return_id,
                                     return_number: result.return_number,
                                     capture_image: savedCaptureImagePath,
+                                    packet_barcode: packet_barcode || null,
+                                    capture_weight_of_bag: capture_weight_of_bag || 0,
                                     items_updated: updateResult?.updatedCount || 0
                                 });
                             }
@@ -195,7 +203,9 @@ exports.saveReturnToMainStock = (req, res) => {
                         message: "Return to main stock completed successfully", 
                         return_id: result.return_id,
                         return_number: result.return_number,
-                        capture_image: savedCaptureImagePath
+                        capture_image: savedCaptureImagePath,
+                        packet_barcode: packet_barcode || null,
+                        capture_weight_of_bag: capture_weight_of_bag || 0
                     });
                 }
             }
@@ -346,9 +356,6 @@ exports.getProductsByStockPoint = (req, res) => {
     });
 };
 
-
-// Add these functions at the bottom of the controller file
-
 // ==================== UPDATE ITEM WEIGHT ====================
 exports.updateItemWeight = (req, res) => {
   const { item_id } = req.params;
@@ -436,4 +443,212 @@ exports.getItemsWithWeightsByReturn = (req, res) => {
       count: results.length
     });
   });
+};
+
+// =============================================
+// GET ITEMS BY BARCODE STATUS
+// =============================================
+exports.getItemsByBarcodeStatus = (req, res) => {
+    const { status } = req.params;
+    
+    if (!status || !['Selected', 'Unselected'].includes(status)) {
+        return res.status(400).json({ 
+            message: "Invalid status. Must be 'Selected' or 'Unselected'" 
+        });
+    }
+    
+    returnToMainStockModel.getItemsByBarcodeStatus(status, (err, results) => {
+        if (err) {
+            console.error("Error fetching items by barcode status:", err);
+            return res.status(500).json({ message: "Error fetching items" });
+        }
+        res.json({ 
+            success: true, 
+            data: results,
+            count: results.length,
+            status: status
+        });
+    });
+};
+
+// =============================================
+// GET ITEMS WITH PACKET BARCODE
+// =============================================
+exports.getItemsWithPacketBarcode = (req, res) => {
+    const { packet_barcode } = req.params;
+    
+    if (!packet_barcode) {
+        return res.status(400).json({ message: "Packet barcode is required" });
+    }
+    
+    returnToMainStockModel.getItemsWithPacketBarcode(packet_barcode, (err, results) => {
+        if (err) {
+            console.error("Error fetching items with packet barcode:", err);
+            return res.status(500).json({ message: "Error fetching items" });
+        }
+        res.json({ 
+            success: true, 
+            data: results,
+            count: results.length,
+            packet_barcode: packet_barcode
+        });
+    });
+};
+
+
+
+// =============================================
+// PACKET BARCODE FUNCTIONS FOR RETURN TO MAIN STOCK
+// =============================================
+
+// Search packet by QR code/barcode
+exports.searchPacketByQRCode = (req, res) => {
+    const { qrCode } = req.params;
+    
+    if (!qrCode) {
+        return res.status(400).json({ 
+            success: false, 
+            message: "QR code is required" 
+        });
+    }
+
+    returnToMainStockModel.searchPacketByQRCode(qrCode, (err, result) => {
+        if (err) {
+            console.error("Error searching packet:", err);
+            return res.status(500).json({ 
+                success: false, 
+                message: "Error searching packet" 
+            });
+        }
+
+        if (!result) {
+            return res.status(404).json({ 
+                success: false, 
+                message: "Packet not found" 
+            });
+        }
+
+        res.json({ 
+            success: true, 
+            data: result 
+        });
+    });
+};
+
+// Create new packet
+exports.createPacket = (req, res) => {
+    const { 
+        prefix, 
+        packet_wt, 
+        qr_code, 
+        status = 'Active' 
+    } = req.body;
+
+    if (!prefix) {
+        return res.status(400).json({ 
+            success: false, 
+            message: "Prefix is required" 
+        });
+    }
+
+    if (!packet_wt) {
+        return res.status(400).json({ 
+            success: false, 
+            message: "Packet weight is required" 
+        });
+    }
+
+    if (!qr_code) {
+        return res.status(400).json({ 
+            success: false, 
+            message: "QR code is required" 
+        });
+    }
+
+    returnToMainStockModel.createPacket({ 
+        prefix, 
+        packet_wt, 
+        qr_code, 
+        status 
+    }, (err, result) => {
+        if (err) {
+            console.error("Error creating packet:", err);
+            return res.status(500).json({ 
+                success: false, 
+                message: "Error creating packet" 
+            });
+        }
+
+        res.json({ 
+            success: true, 
+            message: "Packet created successfully",
+            data: {
+                id: result.insertId,
+                prefix,
+                packet_wt,
+                qr_code,
+                status
+            }
+        });
+    });
+};
+
+// Update packet status
+exports.updatePacketStatus = (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!id) {
+        return res.status(400).json({ 
+            success: false, 
+            message: "Packet ID is required" 
+        });
+    }
+
+    if (!status) {
+        return res.status(400).json({ 
+            success: false, 
+            message: "Status is required" 
+        });
+    }
+
+    returnToMainStockModel.updatePacketStatus(id, status, (err, result) => {
+        if (err) {
+            console.error("Error updating packet status:", err);
+            return res.status(500).json({ 
+                success: false, 
+                message: "Error updating packet status" 
+            });
+        }
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ 
+                success: false, 
+                message: "Packet not found" 
+            });
+        }
+
+        res.json({ 
+            success: true, 
+            message: "Packet status updated successfully" 
+        });
+    });
+};
+
+// Get all packets
+exports.getAllPackets = (req, res) => {
+    returnToMainStockModel.getAllPackets((err, results) => {
+        if (err) {
+            console.error("Error fetching packets:", err);
+            return res.status(500).json({ 
+                success: false, 
+                message: "Error fetching packets" 
+            });
+        }
+
+        res.json({ 
+            success: true, 
+            data: results 
+        });
+    });
 };

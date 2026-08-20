@@ -90,7 +90,9 @@ exports.saveReceivedSalesman = (req, res) => {
       stock_outward_barcode,
       stock_outward_gross_wt,
       stock_outward_type,
-      stock_outward_packet_barcode
+      stock_outward_packet_barcode,
+      // NEW: capture_weight_of_bag
+      capture_weight_of_bag
     } = req.body;
 
     if (!transfer_data || !Array.isArray(transfer_data) || transfer_data.length === 0) {
@@ -112,6 +114,7 @@ exports.saveReceivedSalesman = (req, res) => {
     console.log(`📦 StockOutWard Gross WT: ${stock_outward_gross_wt}`);
     console.log(`📦 StockOutWard Type: ${stock_outward_type}`);
     console.log(`📦 StockOutWard Packet Barcode: ${stock_outward_packet_barcode}`);
+    console.log(`📦 Capture Weight of Bag: ${capture_weight_of_bag || 0}`);
 
     // --- Process capture image (single image for the whole transfer) ---
     let savedCaptureImagePath = null;
@@ -143,7 +146,7 @@ exports.saveReceivedSalesman = (req, res) => {
     // Extract product codes
     const productCodes = processedTransferData.map(item => item.PCode_BarCode).filter(code => code);
 
-    // Insert transfer records with capture image and StockOutWard fields
+    // Insert transfer records with capture image, StockOutWard fields, and capture_weight_of_bag
     receivedSalesmanModel.insert(
       processedTransferData,
       from_salesman_id,
@@ -159,6 +162,7 @@ exports.saveReceivedSalesman = (req, res) => {
       stock_outward_gross_wt,
       stock_outward_type,
       stock_outward_packet_barcode,
+      capture_weight_of_bag, // NEW
       (err, result) => {
         if (err) {
           console.error("Database error:", err);
@@ -188,6 +192,7 @@ exports.saveReceivedSalesman = (req, res) => {
                 stock_outward_gross_wt: stock_outward_gross_wt,
                 stock_outward_type: stock_outward_type,
                 stock_outward_packet_barcode: stock_outward_packet_barcode,
+                capture_weight_of_bag: capture_weight_of_bag || 0,
                 items_updated: updateResult?.updatedCount || 0
               });
             }
@@ -201,7 +206,8 @@ exports.saveReceivedSalesman = (req, res) => {
             stock_outward_barcode: stock_outward_barcode,
             stock_outward_gross_wt: stock_outward_gross_wt,
             stock_outward_type: stock_outward_type,
-            stock_outward_packet_barcode: stock_outward_packet_barcode
+            stock_outward_packet_barcode: stock_outward_packet_barcode,
+            capture_weight_of_bag: capture_weight_of_bag || 0
           });
         }
       }

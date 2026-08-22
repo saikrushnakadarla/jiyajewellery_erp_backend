@@ -1,6 +1,8 @@
 const assignedSalesmanModel = require("../models/assignedSalesman");
 const fs = require('fs');
 const path = require('path');
+// ===== ADD: Import Google Calendar utility =====
+const { createCalendarEvent } = require('../utils/googleCalendar');
 
 /**
  * Save base64 image to file and return the relative URL path.
@@ -75,6 +77,36 @@ const generateAssignedNumber = () => {
 // Cache to prevent duplicate notifications
 const notificationCache = new Set();
 
+// ===== ADD: Helper function to get salesman email =====
+const getSalesmanEmail = (salesmanId) => {
+  return new Promise((resolve, reject) => {
+    const db = require('../db');
+    db.query(
+      'SELECT email FROM account_details WHERE account_id = ?',
+      [salesmanId],
+      (err, results) => {
+        if (err) return reject(err);
+        resolve(results.length ? results[0].email : null);
+      }
+    );
+  });
+};
+
+// ===== ADD: Helper function to get stock point name =====
+const getStockPointName = (stockPointId) => {
+  return new Promise((resolve, reject) => {
+    const db = require('../db');
+    db.query(
+      'SELECT stock_point_name FROM stock_points WHERE stock_point_id = ?',
+      [stockPointId],
+      (err, results) => {
+        if (err) return reject(err);
+        resolve(results.length ? results[0].stock_point_name : null);
+      }
+    );
+  });
+};
+
 exports.saveAssignedSalesman = (req, res) => {
   try {
     const { 
@@ -126,6 +158,7 @@ exports.saveAssignedSalesman = (req, res) => {
     // Generate a unique notification key to prevent duplicates
     const notificationKey = `assignment_${assigned_number}_${to_salesman_id}`;
     
+    // ===== MODIFIED: Make callback async for Google Calendar =====
     assignedSalesmanModel.insert(
       processedTransferData,
       from_stock_point_id,
@@ -140,7 +173,7 @@ exports.saveAssignedSalesman = (req, res) => {
       item_gross_total || 0,
       packet_gross_total || 0,
       total_weight_with_bag || 0,
-      (err, result) => {
+      async (err, result) => {
         if (err) {
           console.error("Database error:", err);
           return res.status(500).json({ message: "Error saving assigned salesman data", error: err });
@@ -162,6 +195,32 @@ exports.saveAssignedSalesman = (req, res) => {
             result.transfer_id
           );
         }
+
+        // ===== ADD: Send Google Calendar notification =====
+        if (to_salesman_id) {
+          try {
+            const salesmanEmail = await getSalesmanEmail(to_salesman_id);
+            if (salesmanEmail) {
+              const fromStockPointName = await getStockPointName(from_stock_point_id);
+              const assignmentData = {
+                assigned_number,
+                transfer_date,
+                total_items: processedTransferData.length,
+                remarks,
+              };
+              // Fire and forget (non-blocking)
+              createCalendarEvent(assignmentData, salesmanEmail, fromStockPointName)
+                .then(() => console.log(`📅 Calendar invite sent to ${salesmanEmail}`))
+                .catch(calError => console.error('Calendar error:', calError));
+            } else {
+              console.warn(`⚠️ No email found for salesman ID ${to_salesman_id}`);
+            }
+          } catch (calError) {
+            console.error('Calendar notification error:', calError);
+            // Do not block the response
+          }
+        }
+        // ===== END: Google Calendar notification =====
         
         res.json({ 
           message: "Assignment created successfully. Waiting for salesman approval.", 

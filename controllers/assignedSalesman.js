@@ -1,8 +1,7 @@
 const assignedSalesmanModel = require("../models/assignedSalesman");
 const fs = require('fs');
 const path = require('path');
-// ===== ADD: Import Google Calendar utility =====
-const { createCalendarEvent } = require('../utils/googleCalendar');
+const { createCalendarEvent, createCalendarNote } = require('../utils/googleCalendar');
 
 /**
  * Save base64 image to file and return the relative URL path.
@@ -11,25 +10,22 @@ const { createCalendarEvent } = require('../utils/googleCalendar');
 const saveImageFile = (base64String, assignedNumber, type = 'item', itemIndex = 0) => {
   if (!base64String) return null;
 
-  // Already a file path (not base64) - return as is
   if (!base64String.startsWith('data:image')) {
     console.log(`Image already a file path: ${base64String}`);
     return base64String;
   }
 
   try {
-    // Extract image type and data
     const matches = base64String.match(/^data:image\/(\w+);base64,(.+)$/);
     if (!matches) {
       console.error('Invalid base64 image format');
       return null;
     }
 
-    const imageType = matches[1]; // e.g., jpg, png, jpeg
+    const imageType = matches[1];
     const imageData = matches[2];
     const buffer = Buffer.from(imageData, 'base64');
 
-    // Ensure uploads directory exists
     const uploadDir = path.join(__dirname, '../uploads/assigned-salesman');
     console.log(`Upload directory path: ${uploadDir}`);
     
@@ -38,7 +34,6 @@ const saveImageFile = (base64String, assignedNumber, type = 'item', itemIndex = 
       console.log(`✅ Created directory: ${uploadDir}`);
     }
 
-    // Generate unique filename based on type
     const timestamp = Date.now();
     let filename;
     if (type === 'capture') {
@@ -49,15 +44,12 @@ const saveImageFile = (base64String, assignedNumber, type = 'item', itemIndex = 
     const filePath = path.join(uploadDir, filename);
     console.log(`📁 Saving image to: ${filePath}`);
 
-    // Write file
     fs.writeFileSync(filePath, buffer);
     console.log(`✅ Image saved: ${filePath}`);
 
-    // Return relative URL for database (with leading slash)
     return `/uploads/assigned-salesman/${filename}`;
   } catch (error) {
     console.error('❌ Error saving image:', error.message);
-    console.error('❌ Stack trace:', error.stack);
     return null;
   }
 };
@@ -77,22 +69,20 @@ const generateAssignedNumber = () => {
 // Cache to prevent duplicate notifications
 const notificationCache = new Set();
 
-// ===== ADD: Helper function to get salesman email =====
 const getSalesmanEmail = (salesmanId) => {
   return new Promise((resolve, reject) => {
     const db = require('../db');
     db.query(
-      'SELECT email FROM account_details WHERE account_id = ?',
+      'SELECT email, account_name FROM account_details WHERE account_id = ?',
       [salesmanId],
       (err, results) => {
         if (err) return reject(err);
-        resolve(results.length ? results[0].email : null);
+        resolve(results.length ? results[0] : null);
       }
     );
   });
 };
 
-// ===== ADD: Helper function to get stock point name =====
 const getStockPointName = (stockPointId) => {
   return new Promise((resolve, reject) => {
     const db = require('../db');
@@ -139,13 +129,13 @@ exports.saveAssignedSalesman = (req, res) => {
 
     const assigned_number = reference_number || generateAssignedNumber();
     console.log(`📦 Processing assignment: ${assigned_number}`);
+    console.log(`📅 Transfer date received: ${transfer_date}`);
 
     let savedCaptureImagePath = null;
     if (capture_image) {
       savedCaptureImagePath = saveImageFile(capture_image, assigned_number, 'capture');
     }
 
-    // Process images for items
     const processedTransferData = transfer_data.map((item, index) => {
       const processedItem = { ...item };
       if (item.image) {
@@ -155,10 +145,8 @@ exports.saveAssignedSalesman = (req, res) => {
       return processedItem;
     });
 
-    // Generate a unique notification key to prevent duplicates
     const notificationKey = `assignment_${assigned_number}_${to_salesman_id}`;
     
-    // ===== MODIFIED: Make callback async for Google Calendar =====
     assignedSalesmanModel.insert(
       processedTransferData,
       from_stock_point_id,
@@ -179,10 +167,8 @@ exports.saveAssignedSalesman = (req, res) => {
           return res.status(500).json({ message: "Error saving assigned salesman data", error: err });
         }
         
-        // Send notification to salesman about pending assignment (ONLY ONCE)
         if (to_salesman_id && !notificationCache.has(notificationKey)) {
           notificationCache.add(notificationKey);
-          // Clear cache after 10 seconds to allow future notifications
           setTimeout(() => {
             notificationCache.delete(notificationKey);
           }, 10000);
@@ -196,31 +182,35 @@ exports.saveAssignedSalesman = (req, res) => {
           );
         }
 
-        // ===== ADD: Send Google Calendar notification =====
+        // ===== FIXED: Send Google Calendar event with proper date =====
         if (to_salesman_id) {
           try {
-            const salesmanEmail = await getSalesmanEmail(to_salesman_id);
-            if (salesmanEmail) {
+            const salesmanInfo = await getSalesmanEmail(to_salesman_id);
+            if (salesmanInfo && salesmanInfo.email) {
               const fromStockPointName = await getStockPointName(from_stock_point_id);
+              
+              // --- FIX: Use the actual transfer_date from the request ---
               const assignmentData = {
                 assigned_number,
-                transfer_date,
+                transfer_date: transfer_date, // Use the actual date from request
                 total_items: processedTransferData.length,
                 remarks,
+                salesmanName: salesmanInfo.account_name,
               };
-              // Fire and forget (non-blocking)
-              createCalendarEvent(assignmentData, salesmanEmail, fromStockPointName)
-                .then(() => console.log(`📅 Calendar invite sent to ${salesmanEmail}`))
+              
+              console.log(`📅 Creating calendar event with date: ${transfer_date}`);
+              
+              // Try to create event with attendee (will send email)
+              createCalendarEvent(assignmentData, salesmanInfo.email, fromStockPointName)
+                .then(() => console.log(`📅 Calendar invite sent to ${salesmanInfo.email}`))
                 .catch(calError => console.error('Calendar error:', calError));
             } else {
               console.warn(`⚠️ No email found for salesman ID ${to_salesman_id}`);
             }
           } catch (calError) {
             console.error('Calendar notification error:', calError);
-            // Do not block the response
           }
         }
-        // ===== END: Google Calendar notification =====
         
         res.json({ 
           message: "Assignment created successfully. Waiting for salesman approval.", 
@@ -238,6 +228,7 @@ exports.saveAssignedSalesman = (req, res) => {
     res.status(400).json({ message: "Invalid data format", error: error.message });
   }
 };
+
 
 // Function to create notification for salesman (UPDATED to include transfer_id)
 const createSalesmanAssignmentNotification = (salesmanId, assignedNumber, transferData, fromStockPointId, transferId) => {

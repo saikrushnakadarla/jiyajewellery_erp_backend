@@ -6,6 +6,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
+const { sendPushToUser } = require('../utils/sendPush'); // 👈 ADDED: Push notification helper
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -358,11 +359,6 @@ async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, 
   }
 }
 
-// Helper function to create notification and send email for customer
-// Replace the createWarehouseScheduleNotification function in backend
-
-// Helper function to create notification and send email for customer (UPDATED - GROUPED BARCODES)
-// Helper function to create notification and send email for customer (UPDATED - INCLUDES SALESMAN PHOTO IN NOTIFICATION)
 // Helper function to create notification and send email for customer (UPDATED - uses schedule ID as related_id)
 async function createWarehouseScheduleNotification(
   customerAccountId, 
@@ -373,7 +369,7 @@ async function createWarehouseScheduleNotification(
   salesmanName, 
   barcodeDetailsArray, 
   salesmanPhoto,
-  scheduleIds // Add this parameter to pass the inserted schedule IDs
+  scheduleIds
 ) {
   try {
     // Get customer details from account_details
@@ -560,6 +556,13 @@ async function createWarehouseScheduleNotification(
     
     console.log(`✅ Single warehouse schedule notification sent to customer ${customerAccountId} with related_id: ${relatedId}`);
     
+    // 👇 ADDED: Send push notification to customer
+    await sendPushToUser(
+      queryAsync, customerAccountId, 'customer',
+      title, `Visit scheduled at ${warehouseName} on ${formattedDate} at ${formattedTime}`,
+      '/customer-dashboard'
+    );
+    
     // Send notification to salesman if assigned
     if (salesmanId) {
       const salesmanTitle = '📦 New Warehouse Visit Assignment';
@@ -571,6 +574,13 @@ async function createWarehouseScheduleNotification(
         `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
          VALUES (?, 'salesman', ?, ?, 'warehouse_schedule', ?, NOW())`,
         [salesmanId, salesmanTitle, salesmanMessage, relatedId]
+      );
+      
+      // 👇 ADDED: Send push notification to salesman
+      await sendPushToUser(
+        queryAsync, salesmanId, 'salesman',
+        salesmanTitle, `New visit assigned at ${warehouseName} on ${formattedDate} at ${formattedTime}`,
+        '/salesman-dashboard'
       );
     }
     
@@ -587,6 +597,13 @@ async function createWarehouseScheduleNotification(
       `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
        VALUES (?, 'warehouse', ?, ?, 'warehouse_schedule', ?, NOW())`,
       [warehouseId, warehouseTitle, warehouseMessage, relatedId]
+    );
+    
+    // 👇 ADDED: Send push notification to warehouse
+    await sendPushToUser(
+      queryAsync, warehouseId, 'warehouse',
+      warehouseTitle, `New customer visit scheduled at your warehouse`,
+      '/warehouse-dashboard'
     );
     
     return true;
@@ -617,8 +634,93 @@ router.get('/', async (req, res) => {
       ORDER BY vlws.scheduled_date DESC
     `);
     
-    console.log(`✅ Found ${schedules.length} schedules`);
-    res.json(schedules);
+    // Format dates to IST (India Standard Time)
+    const formattedSchedules = schedules.map(schedule => {
+      // Helper to format date in IST
+      const formatDateIST = (dateString) => {
+        if (!dateString) return null;
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) return null;
+        
+        // Format in IST
+        return date.toLocaleString('en-IN', {
+          timeZone: 'Asia/Kolkata',
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true
+        });
+      };
+      
+      // Helper to get ISO string in IST
+      const getISOInIST = (dateString) => {
+        if (!dateString) return null;
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) return null;
+        
+        // Convert to IST and return as ISO string
+        const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
+        const istDate = new Date(date.getTime() + istOffset);
+        return istDate.toISOString().replace('Z', '+05:30');
+      };
+      
+      return {
+        ...schedule,
+        
+        // Original UTC dates (keep for reference)
+        created_at_utc: schedule.created_at,
+        updated_at_utc: schedule.updated_at,
+        scheduled_date_utc: schedule.scheduled_date,
+        
+        // === FORMATTED DATES IN IST (Human Readable) ===
+        created_at_ist: formatDateIST(schedule.created_at),
+        updated_at_ist: formatDateIST(schedule.updated_at),
+        scheduled_date_ist: formatDateIST(schedule.scheduled_date),
+        
+        // === ISO STRINGS IN IST (for API consumption) ===
+        created_at_ist_iso: getISOInIST(schedule.created_at),
+        updated_at_ist_iso: getISOInIST(schedule.updated_at),
+        scheduled_date_ist_iso: getISOInIST(schedule.scheduled_date),
+        
+        // === Individual Date Components in IST ===
+        scheduled_date_formatted: schedule.scheduled_date ? 
+          new Date(schedule.scheduled_date).toLocaleDateString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric'
+          }) : null,
+        scheduled_time: schedule.scheduled_date ? 
+          new Date(schedule.scheduled_date).toLocaleTimeString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          }) : null,
+          
+        // For direct display in frontend
+        display_date: schedule.scheduled_date ? 
+          new Date(schedule.scheduled_date).toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          }) : null
+      };
+    });
+    
+    console.log(`✅ Found ${formattedSchedules.length} schedules`);
+    if (formattedSchedules.length > 0) {
+      console.log(`📅 Latest schedule: ${formattedSchedules[0]?.scheduled_date_ist}`);
+    }
+    
+    res.json(formattedSchedules);
   } catch (error) {
     console.error('❌ Error fetching warehouse schedules:', error);
     res.status(500).json({ 
@@ -671,8 +773,6 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST - Create new warehouse visit schedule with multiple barcodes and photo
-
-// POST - Create new warehouse visit schedule with multiple barcodes and photo
 router.post('/', upload.single('salesman_photo'), async (req, res) => {
   try {
     const { 
@@ -682,7 +782,7 @@ router.post('/', upload.single('salesman_photo'), async (req, res) => {
       scheduled_date, 
       salesman_id, 
       salesman_name,
-      salesman_photo_path // NEW: Accept photo path from account-details
+      salesman_photo_path
     } = req.body;
     
     // Determine which photo to use:
@@ -933,8 +1033,6 @@ router.post('/', upload.single('salesman_photo'), async (req, res) => {
   }
 });
 
-// Helper function for update notification with photo
-// Helper function for update notification with photo (UPDATED - handles multiple barcodes)
 // Helper function for update notification with photo (UPDATED - INCLUDES SALESMAN PHOTO IN NOTIFICATION)
 async function createWarehouseScheduleUpdateNotification(
   customerAccountId, 
@@ -1116,6 +1214,13 @@ async function createWarehouseScheduleUpdateNotification(
       [customerAccountId, title, message, customerAccountId, photoUrl]
     );
     
+    // 👇 ADDED: Send push notification to customer
+    await sendPushToUser(
+      queryAsync, customerAccountId, 'customer',
+      title, `Visit updated at ${warehouseName} on ${formattedDate} at ${formattedTime}`,
+      '/customer-dashboard'
+    );
+    
     // Send notification to salesman if assigned
     if (salesmanId) {
       const salesmanTitle = '📦 Warehouse Visit Assignment Updated';
@@ -1129,6 +1234,13 @@ async function createWarehouseScheduleUpdateNotification(
         `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
          VALUES (?, 'salesman', ?, ?, 'warehouse_schedule', ?, NOW())`,
         [salesmanId, salesmanTitle, salesmanMessage, customerAccountId]
+      );
+      
+      // 👇 ADDED: Send push notification to salesman
+      await sendPushToUser(
+        queryAsync, salesmanId, 'salesman',
+        salesmanTitle, `Assignment updated`,
+        '/salesman-dashboard'
       );
     }
     
@@ -1146,12 +1258,18 @@ async function createWarehouseScheduleUpdateNotification(
       [warehouseId, warehouseTitle, warehouseMessage, customerAccountId]
     );
     
+    // 👇 ADDED: Send push notification to warehouse
+    await sendPushToUser(
+      queryAsync, warehouseId, 'warehouse',
+      warehouseTitle, `A warehouse visit has been updated`,
+      '/warehouse-dashboard'
+    );
+    
   } catch (error) {
     console.error('❌ Error creating warehouse update notification:', error);
   }
 }
 
-// PUT - Update warehouse visit schedule with photo
 // PUT - Update warehouse visit schedule with photo
 router.put('/:id', upload.single('salesman_photo'), async (req, res) => {
   try {
@@ -1164,7 +1282,7 @@ router.put('/:id', upload.single('salesman_photo'), async (req, res) => {
       status, 
       salesman_id, 
       salesman_name,
-      salesman_photo_path // NEW: Accept photo path from account-details
+      salesman_photo_path
     } = req.body;
     
     // Determine which photo to use:
@@ -1405,7 +1523,6 @@ router.put('/:id', upload.single('salesman_photo'), async (req, res) => {
   }
 });
 
-
 // Helper function for deletion notification with photo
 async function createWarehouseScheduleDeletionNotification(scheduleData) {
   try {
@@ -1504,6 +1621,13 @@ async function createWarehouseScheduleDeletionNotification(scheduleData) {
     
     console.log(`✅ Warehouse schedule deletion notification sent to customer ${customer_account_id}`);
     
+    // 👇 ADDED: Send push notification to customer
+    await sendPushToUser(
+      queryAsync, customer_account_id, 'customer',
+      title, `Your visit at ${warehouseName} was cancelled`,
+      '/customer-dashboard'
+    );
+    
     // Send notification to salesman if assigned
     if (salesman_id) {
       // Get salesman email from account_details
@@ -1566,6 +1690,13 @@ async function createWarehouseScheduleDeletionNotification(scheduleData) {
       );
       
       console.log(`✅ Warehouse schedule deletion notification sent to salesman ${salesman_id}`);
+      
+      // 👇 ADDED: Send push notification to salesman
+      await sendPushToUser(
+        queryAsync, salesman_id, 'salesman',
+        salesmanTitle, `Assignment cancelled`,
+        '/salesman-dashboard'
+      );
     }
     
     // Create deletion notification for warehouse (NO EMAIL)
@@ -1582,6 +1713,14 @@ async function createWarehouseScheduleDeletionNotification(scheduleData) {
     );
     
     console.log(`✅ Warehouse schedule deletion notification sent to warehouse ${warehouse_id}`);
+    
+    // 👇 ADDED: Send push notification to warehouse
+    await sendPushToUser(
+      queryAsync, warehouse_id, 'warehouse',
+      warehouseTitle, `Customer visit cancelled`,
+      '/warehouse-dashboard'
+    );
+    
   } catch (error) {
     console.error('❌ Error creating warehouse deletion notification:', error);
   }
@@ -1641,7 +1780,6 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// GET - Get barcodes for a specific warehouse/stock point
 // GET - Get barcodes for a specific warehouse/stock point (excluding already scheduled ones)
 router.get('/barcodes/:warehouseId', async (req, res) => {
   try {
@@ -1869,6 +2007,13 @@ async function createWarehouseScheduleStatusNotification(scheduleData, newStatus
     
     console.log(`✅ Warehouse schedule status notification sent to customer ${customer_account_id}`);
     
+    // 👇 ADDED: Send push notification to customer
+    await sendPushToUser(
+      queryAsync, customer_account_id, 'customer',
+      title, message.split('\n')[0].trim(),
+      '/customer-dashboard'
+    );
+    
     // Send notification to salesman if assigned
     if (salesman_id) {
       // Get salesman email from account_details
@@ -1933,6 +2078,13 @@ async function createWarehouseScheduleStatusNotification(scheduleData, newStatus
       );
       
       console.log(`✅ Warehouse schedule status notification sent to salesman ${salesman_id}`);
+      
+      // 👇 ADDED: Send push notification to salesman
+      await sendPushToUser(
+        queryAsync, salesman_id, 'salesman',
+        salesmanTitle, `Visit status: ${newStatus}`,
+        '/salesman-dashboard'
+      );
     }
     
     // Create status notification for warehouse (NO EMAIL)
@@ -1951,6 +2103,14 @@ async function createWarehouseScheduleStatusNotification(scheduleData, newStatus
     );
     
     console.log(`✅ Warehouse schedule status notification sent to warehouse ${warehouse_id}`);
+    
+    // 👇 ADDED: Send push notification to warehouse
+    await sendPushToUser(
+      queryAsync, warehouse_id, 'warehouse',
+      warehouseTitle, `Visit status: ${newStatus}`,
+      '/warehouse-dashboard'
+    );
+    
   } catch (error) {
     console.error('❌ Error creating warehouse status notification:', error);
   }
@@ -2255,6 +2415,13 @@ async function createSalesmanAssignmentNotification(scheduleData, salesmanId, sa
     
     console.log(`✅ Salesman assignment notification sent to customer ${customer_account_id}`);
     
+    // 👇 ADDED: Send push notification to customer
+    await sendPushToUser(
+      queryAsync, customer_account_id, 'customer',
+      customerTitle, `${salesmanName} assigned as your salesperson`,
+      '/customer-dashboard'
+    );
+    
     // Get salesman email from account_details
     const salesmanEmail = await getSalesmanEmail(salesmanId);
     
@@ -2341,6 +2508,13 @@ async function createSalesmanAssignmentNotification(scheduleData, salesmanId, sa
     
     console.log(`✅ Salesman assignment notification sent to salesman ${salesmanId}`);
     
+    // 👇 ADDED: Send push notification to salesman
+    await sendPushToUser(
+      queryAsync, salesmanId, 'salesman',
+      salesmanTitle, `New assignment: ${customerName}`,
+      '/salesman-dashboard'
+    );
+    
     // NEW: Create assignment notification for warehouse (NO EMAIL)
     const warehouseTitle = '👤 Salesperson Assigned';
     const warehouseMessage = `A salesperson has been assigned for a customer visit at your warehouse.
@@ -2356,6 +2530,14 @@ async function createSalesmanAssignmentNotification(scheduleData, salesmanId, sa
     );
     
     console.log(`✅ Salesman assignment notification sent to warehouse ${warehouse_id}`);
+    
+    // 👇 ADDED: Send push notification to warehouse
+    await sendPushToUser(
+      queryAsync, warehouse_id, 'warehouse',
+      warehouseTitle, `Salesperson assigned for a customer visit`,
+      '/warehouse-dashboard'
+    );
+    
   } catch (error) {
     console.error('❌ Error creating salesman assignment notification:', error);
   }
@@ -2554,8 +2736,6 @@ router.put('/notifications/mark-all-read/:userId', async (req, res) => {
   }
 });
 
-
-// PUT - Update customer status for a schedule (Available/Not Available)
 // PUT - Update customer status for a schedule (Available/Not Available)
 // This will update ALL schedules with the same scheduled_date
 router.put('/:id/customer-status', async (req, res) => {
@@ -2650,7 +2830,6 @@ router.put('/:id/customer-status', async (req, res) => {
   }
 });
 
-// PUT - Update customer status to Not Available with reschedule details
 // PUT - Update customer status to Not Available with reschedule details
 // This will update ALL schedules with the same scheduled_date
 router.put('/:id/not-available-reschedule', async (req, res) => {
@@ -2755,7 +2934,6 @@ router.put('/:id/not-available-reschedule', async (req, res) => {
   }
 });
 
-
 // Helper function for customer availability notification
 async function createCustomerAvailabilityNotification(scheduleData, status, rescheduleDate = null, rescheduleNotes = null) {
   try {
@@ -2855,6 +3033,13 @@ async function createCustomerAvailabilityNotification(scheduleData, status, resc
         [salesman_id, title, message, customer_account_id]
       );
       
+      // 👇 ADDED: Send push notification to salesman
+      await sendPushToUser(
+        queryAsync, salesman_id, 'salesman',
+        title, `${customerName} confirmed availability`,
+        '/salesman-dashboard'
+      );
+      
       // Notification to warehouse
       const warehouseTitle = '✅ Customer Available for Visit';
       const warehouseMessage = `Customer ${customerName} (${customerId}) is available for the visit at your warehouse.
@@ -2865,6 +3050,13 @@ async function createCustomerAvailabilityNotification(scheduleData, status, resc
         `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
          VALUES (?, 'warehouse', ?, ?, 'warehouse_schedule', ?, NOW())`,
         [warehouse_id, warehouseTitle, warehouseMessage, customer_account_id]
+      );
+      
+      // 👇 ADDED: Send push notification to warehouse
+      await sendPushToUser(
+        queryAsync, warehouse_id, 'warehouse',
+        warehouseTitle, `${customerName} confirmed availability`,
+        '/warehouse-dashboard'
       );
       
     } else if (status === 'not_available') {
@@ -2941,6 +3133,13 @@ async function createCustomerAvailabilityNotification(scheduleData, status, resc
         [salesman_id, title, message, customer_account_id]
       );
       
+      // 👇 ADDED: Send push notification to salesman
+      await sendPushToUser(
+        queryAsync, salesman_id, 'salesman',
+        title, `${customerName} requested reschedule`,
+        '/salesman-dashboard'
+      );
+      
       // Notification to warehouse
       const warehouseTitle = '⚠️ Customer Not Available - Reschedule Requested';
       const warehouseMessage = `Customer ${customerName} (${customerId}) is not available for the visit at your warehouse.
@@ -2954,8 +3153,12 @@ async function createCustomerAvailabilityNotification(scheduleData, status, resc
         [warehouse_id, warehouseTitle, warehouseMessage, customer_account_id]
       );
       
-      // Also notify admin or manager (optional)
-      // You can add additional notification for admin here
+      // 👇 ADDED: Send push notification to warehouse
+      await sendPushToUser(
+        queryAsync, warehouse_id, 'warehouse',
+        warehouseTitle, `${customerName} requested reschedule`,
+        '/warehouse-dashboard'
+      );
     }
     
   } catch (error) {
@@ -2994,5 +3197,40 @@ async function getSalesmanEmail(salesmanId) {
     return null;
   }
 }
+
+
+// In visitLogsWarehouseRoutes.js or create a new test route file
+
+// Test endpoint to send a test push notification
+router.post('/test-push/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { userType = 'customer' } = req.body;
+    
+    console.log(`🧪 Sending test push to ${userType} ${userId}`);
+    
+    await sendPushToUser(
+      queryAsync,
+      userId,
+      userType,
+      '🧪 Test Notification',
+      'This is a test push notification from Jiyaa Jewels',
+      '/customer-dashboard'
+    );
+    
+    res.json({ 
+      success: true, 
+      message: 'Test push sent successfully',
+      userId,
+      userType
+    });
+  } catch (error) {
+    console.error('❌ Test push error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
 
 module.exports = router;

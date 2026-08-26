@@ -130,6 +130,9 @@ app.use("/api/return-to-main-stock", returnToMainStockRoutes);
 app.use('/api/visit-logs-warehouse-schedule', visitLogsWarehouseScheduleRoutes);
 
 
+app.use('/api/push', require('./routes/push'));
+
+
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);

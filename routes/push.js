@@ -51,8 +51,50 @@ router.post('/subscribe', async (req, res) => {
   }
 });
 
+
 router.get('/vapid-public-key', (req, res) => {
-  res.json({ publicKey: process.env.VAPID_PUBLIC_KEY });
+  const key = process.env.VAPID_PUBLIC_KEY;
+  console.log('🔑 Serving VAPID public key. Length:', key?.length,
+    'First 10:', key?.slice(0, 10), 'Last 10:', key?.slice(-10));
+  res.json({ publicKey: key });
 });
+
+
+// Add to push.js routes
+
+router.post('/test-send', async (req, res) => {
+  try {
+    const { user_id, user_type, title, body, url } = req.body;
+    
+    console.log(`🔔 Test push request for ${user_type} ${user_id}`);
+    console.log(`   Title: ${title}`);
+    console.log(`   Body: ${body}`);
+    
+    const { sendPushToUser } = require('../utils/sendPush');
+    
+    await sendPushToUser(
+      queryAsync,
+      user_id,
+      user_type,
+      title || '🔔 Test Notification',
+      body || 'This is a test notification from Jiyaa Jewels',
+      url || '/'
+    );
+    
+    res.json({ 
+      success: true, 
+      message: 'Test push sent successfully',
+      user_id,
+      user_type
+    });
+  } catch (error) {
+    console.error('❌ Test push error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
 
 module.exports = router;

@@ -7,7 +7,6 @@ const fs = require('fs');
 // Configure multer for image uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    // Check if it's a profile photo or customer image
     let uploadDir = 'uploads/customer_images';
     if (file.fieldname === 'profile_photo') {
       uploadDir = 'uploads/profile_photos';
@@ -67,11 +66,10 @@ const generateCustomerId = () => {
   });
 };
 
-// Insert new account record - UPDATED with district and profile_photo
+// Insert new account record
 const createAccount = async (data, files) => {
   return new Promise(async (resolve, reject) => {
     try {
-      // Generate customer_id only for CUSTOMERS group, not for SALESMAN
       let customerId = null;
       let userId = data.user_id || null;
       
@@ -79,7 +77,6 @@ const createAccount = async (data, files) => {
         customerId = await generateCustomerId();
       }
       
-      // Handle images - files is an object with field names as keys
       let imageData = null;
       if (files && files.images && files.images.length > 0) {
         const images = files.images.map(file => ({
@@ -89,22 +86,20 @@ const createAccount = async (data, files) => {
         imageData = JSON.stringify(images);
       }
       
-      // Handle profile photo (for SALESMAN registration)
       let profilePhotoPath = null;
       if (files && files.profile_photo && files.profile_photo.length > 0) {
         const profilePhoto = files.profile_photo[0];
         profilePhotoPath = `/uploads/profile_photos/${profilePhoto.filename}`;
       }
       
-      // UPDATED: Added district and profile_photo columns (34 columns total)
       const sql = `INSERT INTO account_details (
           account_name, print_name, account_group, op_bal, metal_balance, dr_cr,
           address1, address2, city, district, pincode, state, state_code,
           phone, mobile, contact_person, email, birthday, anniversary,
           bank_account_no, bank_name, ifsc_code, branch, gst_in, aadhar_card,
           pan_card, religion, images, customer_id, user_id, password,
-          duty_start_time, duty_end_time, profile_photo
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+          duty_start_time, duty_end_time, profile_photo, designation, company_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
       const values = [
           data.account_name, 
@@ -140,7 +135,9 @@ const createAccount = async (data, files) => {
           data.password || null,
           data.duty_start_time || null,
           data.duty_end_time || null,
-          profilePhotoPath // New profile_photo field
+          profilePhotoPath,
+          data.designation || null,
+          data.company_name || null
       ];
 
       console.log('Executing SQL with values:', values);
@@ -185,7 +182,7 @@ const checkDutyHoursByAccountId = (accountId, callback) => {
     db.query(sql, [accountId], callback);
 };
 
-// Update account by ID - UPDATED with district and profile_photo
+// Update account by ID
 const updateAccount = (id, data, files, imagesToKeep, callback) => {
     db.query('SELECT images, profile_photo FROM account_details WHERE account_id = ?', [id], (err, results) => {
         if (err) {
@@ -224,34 +221,61 @@ const updateAccount = (id, data, files, imagesToKeep, callback) => {
         const allImages = [...keptImages, ...newImages];
         const imageData = allImages.length > 0 ? JSON.stringify(allImages) : null;
         
-        // Handle profile photo update
         let profilePhotoPath = results[0]?.profile_photo || null;
         if (files && files.profile_photo && files.profile_photo.length > 0) {
             const profilePhoto = files.profile_photo[0];
             profilePhotoPath = `/uploads/profile_photos/${profilePhoto.filename}`;
         }
         
-        // UPDATED: Added district and profile_photo columns
-        const sql = `UPDATE account_details SET 
-            account_name = ?, print_name = ?, account_group = ?, op_bal = ?, metal_balance = ?, dr_cr = ?,
+        // Build SQL query dynamically to handle optional fields
+        let sql = `UPDATE account_details SET 
+            account_name = ?, print_name = ?, account_group = ?, 
             address1 = ?, address2 = ?, city = ?, district = ?, pincode = ?, state = ?, state_code = ?,
-            phone = ?, mobile = ?, contact_person = ?, email = ?, birthday = ?, anniversary = ?,
+            phone = ?, mobile = ?, email = ?, birthday = ?, anniversary = ?,
             bank_account_no = ?, bank_name = ?, ifsc_code = ?, branch = ?, gst_in = ?, aadhar_card = ?, 
-            pan_card = ?, religion = ?, images = ?, profile_photo = ?
-        WHERE account_id = ?`;
+            pan_card = ?, religion = ?, images = ?, profile_photo = ?, designation = ?, company_name = ?`;
 
         const values = [
-            data.account_name, data.print_name, data.account_group, data.op_bal || null, 
-            data.metal_balance || null, data.dr_cr || null,
-            data.address1 || null, data.address2 || null, data.city || null,
+            data.account_name, 
+            data.print_name, 
+            data.account_group,
+            data.address1 || null, 
+            data.address2 || null, 
+            data.city || null,
             data.district || null,
-            data.pincode || null, data.state || null, data.state_code || null,
-            data.phone || null, data.mobile || null, data.contact_person || null, 
-            data.email || null, data.birthday || null, data.anniversary || null,
-            data.bank_account_no || null, data.bank_name || null, data.ifsc_code || null, 
-            data.branch || null, data.gst_in || null, data.aadhar_card || null, 
-            data.pan_card || null, data.religion || null, imageData, profilePhotoPath, id
+            data.pincode || null, 
+            data.state || null, 
+            data.state_code || null,
+            data.phone || null, 
+            data.mobile || null, 
+            data.email || null, 
+            data.birthday || null, 
+            data.anniversary || null,
+            data.bank_account_no || null, 
+            data.bank_name || null, 
+            data.ifsc_code || null, 
+            data.branch || null, 
+            data.gst_in || null, 
+            data.aadhar_card || null, 
+            data.pan_card || null, 
+            data.religion || null, 
+            imageData, 
+            profilePhotoPath,
+            data.designation || null,
+            data.company_name || null
         ];
+
+        // Handle password update only if provided
+        if (data.password && data.password.trim() !== '') {
+            sql += `, password = ?`;
+            values.push(data.password);
+        }
+
+        sql += ` WHERE account_id = ?`;
+        values.push(id);
+
+        console.log('Update SQL:', sql);
+        console.log('Update Values:', values);
 
         db.query(sql, values, callback);
     });
@@ -261,7 +285,6 @@ const updateAccount = (id, data, files, imagesToKeep, callback) => {
 const deleteAccount = (id, callback) => {
     db.query('SELECT images, profile_photo FROM account_details WHERE account_id = ?', [id], (err, results) => {
         if (!err && results[0]) {
-            // Delete customer images
             if (results[0].images) {
                 try {
                     const images = JSON.parse(results[0].images);
@@ -274,7 +297,6 @@ const deleteAccount = (id, callback) => {
                 } catch(e) {}
             }
             
-            // Delete profile photo
             if (results[0].profile_photo) {
                 const fileName = results[0].profile_photo.split('/').pop();
                 const filePath = path.join(__dirname, '../uploads/profile_photos', fileName);

@@ -72,9 +72,8 @@ exports.insert = (
     totalWeightMachineConfidence += parseInt(item.weight_machine_confidence) || 0;
   });
 
-  // Calculate averages for confidence
-  const avgWeightMachineConfidence = totalItems > 0 
-    ? Math.round(totalWeightMachineConfidence / totalItems) 
+  const avgWeightMachineConfidence = totalItems > 0
+    ? Math.round(totalWeightMachineConfidence / totalItems)
     : 0;
 
   const calculatedItemGrossTotal = totalGrossWeight;
@@ -84,7 +83,6 @@ exports.insert = (
   const finalPacketGrossTotal = packet_gross_total || calculatedPacketGrossTotal;
   const finalTotalWeightWithBag = total_weight_with_bag || 0;
 
-  // Store ALL data as JSON in pending_data field
   const pendingData = JSON.stringify({
     transfer_data: transfer_data.map(item => ({
       product_id: item.product_id,
@@ -108,7 +106,6 @@ exports.insert = (
       PCode_BarCode: item.PCode_BarCode,
       image: item.image || null,
       remarks: item.remarks || null,
-      // Weight machine data - stored in pending data
       weight_machine_reading: parseFloat(item.weight_machine_reading) || 0,
       weight_machine_grams: parseInt(item.weight_machine_grams) || 0,
       weight_machine_milligrams: parseInt(item.weight_machine_milligrams) || 0,
@@ -132,7 +129,6 @@ exports.insert = (
     total_net_weight: totalNetWeight
   });
 
-  // Insert the header record with pending_data and weight fields
   const insertTransferSql = `
     INSERT INTO assigned_salesman_transfers (
       assigned_number,
@@ -165,7 +161,6 @@ exports.insert = (
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
   `;
 
-  // Get the latest weight_extracted_at from items (if any have weights)
   let latestWeightExtractedAt = null;
   for (const item of transfer_data) {
     if (item.weight_machine_reading && parseFloat(item.weight_machine_reading) > 0) {
@@ -194,12 +189,11 @@ exports.insert = (
     capture_image || null,
     created_by || null,
     pendingData,
-    // Weight fields
     totalWeightMachineReading || 0,
     totalWeightMachineGrams || 0,
     totalWeightMachineMilligrams || 0,
     avgWeightMachineConfidence || 0,
-    null, // weight_machine_raw (we don't have a single raw value for the whole transfer)
+    null,
     latestWeightExtractedAt
   ];
 
@@ -210,11 +204,30 @@ exports.insert = (
     }
 
     const assignedId = transferResult.insertId;
-    
+
+    // 🆕 FIX: Immediately mark these tags as no longer selectable,
+    // instead of waiting for the salesman's approval to update opening_tags_entry.
+    const barcodes = transfer_data.map(item => item.PCode_BarCode).filter(Boolean);
+    if (barcodes.length > 0) {
+      const placeholders = barcodes.map(() => '?').join(',');
+      const updateTagsSql = `
+        UPDATE opening_tags_entry 
+        SET Status = 'Pending Assignment' 
+        WHERE PCode_BarCode IN (${placeholders}) AND Status = 'Available'
+      `;
+      db.query(updateTagsSql, barcodes, (tagErr, tagResult) => {
+        if (tagErr) {
+          console.error('❌ Error updating tag status to Pending Assignment:', tagErr);
+        } else {
+          console.log(`🔒 Locked ${tagResult.affectedRows} tag(s) as Pending Assignment: ${barcodes.join(', ')}`);
+        }
+      });
+    }
+
     console.log(`✅ Assignment ${assigned_number} saved as PENDING (ID: ${assignedId})`);
     console.log(`📦 ${totalItems} items pending approval`);
     console.log(`📊 Total weight machine reading: ${totalWeightMachineReading}g`);
-    
+
     callback(null, { transfer_id: assignedId, transfer_number: assigned_number });
   });
 };
@@ -343,19 +356,61 @@ exports.approveAssignment = (assigned_id, callback) => {
 
 // ==================== REJECT ====================
 exports.rejectAssignment = (assigned_id, callback) => {
-  const sql = `
-    UPDATE assigned_salesman_transfers 
-    SET salesman_status = 'rejected', 
-        status = 'cancelled',
-        pending_data = NULL,
-        updated_at = NOW()
-    WHERE assigned_id = ?
-  `;
-  
-  db.query(sql, [assigned_id], (err, result) => {
-    if (err) return callback(err);
-    console.log(`❌ Assignment ${assigned_id} rejected`);
-    callback(null, { rejected: true });
+  // 🆕 FIX: fetch pending_data first so we know which barcodes to revert
+  const getSql = `SELECT pending_data FROM assigned_salesman_transfers WHERE assigned_id = ?`;
+
+  db.query(getSql, [assigned_id], (getErr, getResults) => {
+    if (getErr) {
+      console.error("Error fetching pending data for rejection:", getErr);
+      return callback(getErr);
+    }
+    if (getResults.length === 0) {
+      return callback(new Error("Assignment not found"));
+    }
+
+    let barcodes = [];
+    try {
+      const data = JSON.parse(getResults[0].pending_data || '{}');
+      barcodes = (data.transfer_data || []).map(item => item.PCode_BarCode).filter(Boolean);
+    } catch (parseErr) {
+      console.error("Error parsing pending_data during rejection:", parseErr);
+    }
+
+    const sql = `
+      UPDATE assigned_salesman_transfers 
+      SET salesman_status = 'rejected', 
+          status = 'cancelled',
+          pending_data = NULL,
+          updated_at = NOW()
+      WHERE assigned_id = ?
+    `;
+
+    db.query(sql, [assigned_id], (err, result) => {
+      if (err) {
+        console.error("Error rejecting assignment:", err);
+        return callback(err);
+      }
+
+      // 🆕 FIX: release the tags back to Available so they show up again
+      if (barcodes.length > 0) {
+        const placeholders = barcodes.map(() => '?').join(',');
+        const revertSql = `
+          UPDATE opening_tags_entry 
+          SET Status = 'Available' 
+          WHERE PCode_BarCode IN (${placeholders}) AND Status = 'Pending Assignment'
+        `;
+        db.query(revertSql, barcodes, (revertErr, revertResult) => {
+          if (revertErr) {
+            console.error('❌ Error reverting tag status after rejection:', revertErr);
+          } else {
+            console.log(`🔓 Reverted ${revertResult.affectedRows} tag(s) to Available: ${barcodes.join(', ')}`);
+          }
+        });
+      }
+
+      console.log(`❌ Assignment ${assigned_id} rejected`);
+      callback(null, { rejected: true });
+    });
   });
 };
 
@@ -609,12 +664,53 @@ exports.update = (assigned_id, status, remarks, callback) => {
 };
 
 exports.delete = (assigned_id, callback) => {
-  const deleteItemsSql = `DELETE FROM assigned_salesman_items WHERE assigned_id = ?`;
-  db.query(deleteItemsSql, [assigned_id], (err) => {
-    if (err) return callback(err);
-    
-    const deleteTransferSql = `DELETE FROM assigned_salesman_transfers WHERE assigned_id = ?`;
-    db.query(deleteTransferSql, [assigned_id], callback);
+  // 🆕 FIX: fetch pending_data first (if still pending) so we can release the tags
+  const getSql = `SELECT pending_data, salesman_status FROM assigned_salesman_transfers WHERE assigned_id = ?`;
+
+  db.query(getSql, [assigned_id], (getErr, getResults) => {
+    if (getErr) {
+      console.error("Error fetching assignment before delete:", getErr);
+      return callback(getErr);
+    }
+
+    let barcodes = [];
+    if (getResults.length > 0 && getResults[0].salesman_status === 'pending' && getResults[0].pending_data) {
+      try {
+        const data = JSON.parse(getResults[0].pending_data);
+        barcodes = (data.transfer_data || []).map(item => item.PCode_BarCode).filter(Boolean);
+      } catch (parseErr) {
+        console.error("Error parsing pending_data during delete:", parseErr);
+      }
+    }
+
+    const deleteItemsSql = `DELETE FROM assigned_salesman_items WHERE assigned_id = ?`;
+    db.query(deleteItemsSql, [assigned_id], (err) => {
+      if (err) return callback(err);
+
+      const deleteTransferSql = `DELETE FROM assigned_salesman_transfers WHERE assigned_id = ?`;
+      db.query(deleteTransferSql, [assigned_id], (deleteErr, deleteResult) => {
+        if (deleteErr) return callback(deleteErr);
+
+        // 🆕 FIX: release tags that were locked as Pending Assignment
+        if (barcodes.length > 0) {
+          const placeholders = barcodes.map(() => '?').join(',');
+          const revertSql = `
+            UPDATE opening_tags_entry 
+            SET Status = 'Available' 
+            WHERE PCode_BarCode IN (${placeholders}) AND Status = 'Pending Assignment'
+          `;
+          db.query(revertSql, barcodes, (revertErr, revertResult) => {
+            if (revertErr) {
+              console.error('❌ Error reverting tag status after delete:', revertErr);
+            } else {
+              console.log(`🔓 Reverted ${revertResult.affectedRows} tag(s) to Available after delete: ${barcodes.join(', ')}`);
+            }
+          });
+        }
+
+        callback(null, deleteResult);
+      });
+    });
   });
 };
 

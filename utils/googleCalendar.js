@@ -24,11 +24,10 @@ const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
  */
 function convertToIST(dateString) {
   if (!dateString) return null;
-  
+
   const date = new Date(dateString);
   if (isNaN(date.getTime())) return null;
-  
-  // Get the time in IST
+
   const istDate = new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
   return istDate;
 }
@@ -61,39 +60,31 @@ Please review and accept this assignment in the Jiya ERP application.
 
   console.log(`📅 Original transfer_date: ${transfer_date}`);
 
-  // --- FIX: Properly handle the transfer_date ---
   let startDateTime;
-  
+
   if (transfer_date) {
-    // Create date from the transfer_date string
     const dateObj = new Date(transfer_date);
-    
+
     if (isNaN(dateObj.getTime())) {
       console.warn('⚠️ Invalid transfer_date, using current time + 1 hour');
       startDateTime = new Date();
       startDateTime.setHours(startDateTime.getHours() + 1);
     } else {
-      // If the date has a Z (UTC) or includes time, keep it as is
-      // Google Calendar will handle the timezone conversion based on the timeZone parameter
       if (transfer_date.includes('Z') || transfer_date.includes('T')) {
-        // It's an ISO string with time, use as is (UTC)
         startDateTime = new Date(transfer_date);
         console.log(`📅 Using UTC time: ${startDateTime.toISOString()}`);
       } else {
-        // It's a date string without time, set to 9:00 AM local time
         startDateTime = new Date(transfer_date);
         startDateTime.setHours(9, 0, 0, 0);
         console.log(`📅 Using date-only, set to 9:00 AM: ${startDateTime.toISOString()}`);
       }
     }
   } else {
-    // Fallback to current time + 1 hour
     startDateTime = new Date();
     startDateTime.setHours(startDateTime.getHours() + 1);
     console.log(`📅 No date provided, using fallback: ${startDateTime.toISOString()}`);
   }
-  
-  // Ensure we have a valid date
+
   if (isNaN(startDateTime.getTime())) {
     console.warn('⚠️ Invalid date object, using current time + 1 hour');
     startDateTime = new Date();
@@ -103,7 +94,6 @@ Please review and accept this assignment in the Jiya ERP application.
   const endDateTime = new Date(startDateTime);
   endDateTime.setHours(endDateTime.getHours() + 1);
 
-  // Log the times for debugging
   console.log(`📅 Event start (UTC): ${startDateTime.toISOString()}`);
   console.log(`📅 Event end (UTC): ${endDateTime.toISOString()}`);
   console.log(`📅 Event start (IST): ${startDateTime.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
@@ -216,4 +206,168 @@ This is a note about the assignment. The salesman will be notified via the app.
   }
 }
 
-module.exports = { createCalendarEvent, createCalendarNote };
+// ================================================================
+// WAREHOUSE VISIT SCHEDULE CALENDAR EVENTS (customer + salesman)
+// ================================================================
+
+function buildVisitEventPayload({
+  customerEmail,
+  customerName,
+  salesmanEmail,
+  salesmanName,
+  warehouseName,
+  scheduledDate,
+  barcodes
+}) {
+  const summary = `🧑‍💼 Warehouse Visit - ${customerName || 'Customer'}`;
+  const description = `
+Customer: ${customerName || 'N/A'}
+Warehouse: ${warehouseName || 'N/A'}
+Salesperson: ${salesmanName || 'Not assigned yet'}
+Items: ${barcodes && barcodes.length ? barcodes.join(', ') : 'N/A'}
+
+Please be available at the scheduled time.
+Booked via Jiyaa Jewels ERP.
+  `.trim();
+
+  let startDateTime = scheduledDate ? new Date(scheduledDate) : null;
+  if (!startDateTime || isNaN(startDateTime.getTime())) {
+    console.warn('⚠️ Invalid/missing scheduledDate for visit event, using current time + 1 hour');
+    startDateTime = new Date();
+    startDateTime.setHours(startDateTime.getHours() + 1);
+  }
+
+  const endDateTime = new Date(startDateTime);
+  endDateTime.setHours(endDateTime.getHours() + 1);
+
+  const attendees = [];
+  if (customerEmail) attendees.push({ email: customerEmail });
+  if (salesmanEmail) attendees.push({ email: salesmanEmail });
+
+  return {
+    summary,
+    description,
+    start: { dateTime: startDateTime.toISOString(), timeZone: 'Asia/Kolkata' },
+    end: { dateTime: endDateTime.toISOString(), timeZone: 'Asia/Kolkata' },
+    attendees,
+    reminders: {
+      useDefault: false,
+      overrides: [
+        { method: 'email', minutes: 60 },
+        { method: 'popup', minutes: 15 },
+      ],
+    },
+  };
+}
+
+/**
+ * Creates a calendar event for a customer warehouse-visit schedule.
+ * Invites the customer (and the salesman, if one is assigned/known).
+ */
+async function createVisitScheduleEvent(params) {
+  const { customerEmail, salesmanEmail } = params;
+
+  if (!customerEmail && !salesmanEmail) {
+    console.warn('⚠️ No customer or salesman email – skipping visit calendar invite.');
+    return null;
+  }
+
+  if (!CLIENT_ID || !CLIENT_SECRET || !REFRESH_TOKEN) {
+    console.warn('⚠️ Google Calendar not configured – skipping visit calendar invite.');
+    return null;
+  }
+
+  const event = buildVisitEventPayload(params);
+  console.log(`📅 Visit event attendees: ${(event.attendees || []).map(a => a.email).join(', ') || 'none'}`);
+
+  try {
+    const response = await calendar.events.insert({
+      calendarId: 'primary',
+      resource: event,
+      sendUpdates: 'all',
+    });
+    console.log(`✅ Visit calendar event created: ${response.data.htmlLink}`);
+    return response.data; // has .id -- save this to DB
+  } catch (error) {
+    console.error('❌ Failed to create visit calendar event:', error.message);
+    if (error.response) {
+      console.error('📋 Error details:', JSON.stringify(error.response.data, null, 2));
+    }
+    return null;
+  }
+}
+
+/**
+ * Updates an existing visit calendar event in place. If eventId is missing,
+ * or the update fails (e.g. event was deleted manually), falls back to
+ * creating a brand-new event instead.
+ */
+async function updateVisitScheduleEvent(eventId, params) {
+  const { customerEmail, salesmanEmail } = params;
+
+  if (!eventId) {
+    return createVisitScheduleEvent(params);
+  }
+
+  if (!customerEmail && !salesmanEmail) {
+    console.warn('⚠️ No customer or salesman email – skipping visit calendar update.');
+    return null;
+  }
+
+  if (!CLIENT_ID || !CLIENT_SECRET || !REFRESH_TOKEN) {
+    console.warn('⚠️ Google Calendar not configured – skipping visit calendar update.');
+    return null;
+  }
+
+  const event = buildVisitEventPayload(params);
+
+  try {
+    const response = await calendar.events.update({
+      calendarId: 'primary',
+      eventId,
+      resource: event,
+      sendUpdates: 'all',
+    });
+    console.log(`✅ Visit calendar event updated: ${response.data.htmlLink}`);
+    return response.data;
+  } catch (error) {
+    console.warn(`⚠️ Failed to update visit calendar event ${eventId} (creating a new one instead): ${error.message}`);
+    return createVisitScheduleEvent(params);
+  }
+}
+
+/**
+ * Cancels/deletes a visit calendar event. sendUpdates:'all' lets both
+ * the customer and salesman see the cancellation on their calendars.
+ */
+async function deleteVisitScheduleEvent(eventId) {
+  if (!eventId) return;
+
+  if (!CLIENT_ID || !CLIENT_SECRET || !REFRESH_TOKEN) {
+    console.warn('⚠️ Google Calendar not configured – skipping visit calendar deletion.');
+    return;
+  }
+
+  try {
+    await calendar.events.delete({
+      calendarId: 'primary',
+      eventId,
+      sendUpdates: 'all',
+    });
+    console.log(`🗑️ Visit calendar event ${eventId} deleted/cancelled.`);
+  } catch (error) {
+    if (error.code === 410 || error.code === 404) {
+      console.log(`ℹ️ Visit calendar event ${eventId} was already deleted.`);
+    } else {
+      console.error(`❌ Failed to delete visit calendar event ${eventId}:`, error.message);
+    }
+  }
+}
+
+module.exports = {
+  createCalendarEvent,
+  createCalendarNote,
+  createVisitScheduleEvent,
+  updateVisitScheduleEvent,
+  deleteVisitScheduleEvent
+};

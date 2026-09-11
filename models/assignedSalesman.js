@@ -16,9 +16,10 @@ exports.insert = (
   item_gross_total = 0,
   packet_gross_total = 0,
   total_weight_with_bag = 0,
+  weightMachineTotals = null,   // 🆕 ADDED: single captured weight object { reading, grams, milligrams, confidence }
   callback
 ) => {
-  // Handle optional parameters
+  // Handle optional parameters (unchanged existing shim logic)
   if (typeof from_user_id === 'function') {
     callback = from_user_id;
     from_user_id = null;
@@ -27,6 +28,7 @@ exports.insert = (
     item_gross_total = 0;
     packet_gross_total = 0;
     total_weight_with_bag = 0;
+    weightMachineTotals = null;
   }
   if (typeof to_user_id === 'function' && callback) {
     callback = to_user_id;
@@ -35,6 +37,7 @@ exports.insert = (
     item_gross_total = 0;
     packet_gross_total = 0;
     total_weight_with_bag = 0;
+    weightMachineTotals = null;
   }
   if (typeof capture_image === 'function' && callback) {
     callback = capture_image;
@@ -42,6 +45,13 @@ exports.insert = (
     item_gross_total = 0;
     packet_gross_total = 0;
     total_weight_with_bag = 0;
+    weightMachineTotals = null;
+  }
+  // 🆕 ADDED: shim for older callers that stop at total_weight_with_bag
+  // (i.e. pass a function where weightMachineTotals is expected)
+  if (typeof weightMachineTotals === 'function' && callback === undefined) {
+    callback = weightMachineTotals;
+    weightMachineTotals = null;
   }
 
   if (!Array.isArray(transfer_data) || transfer_data.length === 0) {
@@ -56,6 +66,10 @@ exports.insert = (
   let totalGrossWeight = 0;
   let totalNetWeight = 0;
   let totalPackingWt = 0;
+
+  // 🆕 CHANGED: these are no longer accumulated in the forEach loop below.
+  // They get set once, either from weightMachineTotals or from the first
+  // non-zero item reading — never summed across items.
   let totalWeightMachineReading = 0;
   let totalWeightMachineGrams = 0;
   let totalWeightMachineMilligrams = 0;
@@ -66,15 +80,33 @@ exports.insert = (
     totalGrossWeight += parseFloat(item.gross_weight) || 0;
     totalNetWeight += parseFloat(item.net_weight) || 0;
     totalPackingWt += parseFloat(item.packing_wt) || 0;
-    totalWeightMachineReading += parseFloat(item.weight_machine_reading) || 0;
-    totalWeightMachineGrams += parseInt(item.weight_machine_grams) || 0;
-    totalWeightMachineMilligrams += parseInt(item.weight_machine_milligrams) || 0;
-    totalWeightMachineConfidence += parseInt(item.weight_machine_confidence) || 0;
+    // ❌ REMOVED: the four totalWeightMachine* += lines that used to sum
+    // per-item readings here (this was the root cause of the doubling bug)
   });
 
-  const avgWeightMachineConfidence = totalItems > 0
-    ? Math.round(totalWeightMachineConfidence / totalItems)
-    : 0;
+  // 🆕 ADDED: derive the transfer-level weight from the single captured
+  // reading instead of summing item-level values
+  if (weightMachineTotals && parseFloat(weightMachineTotals.reading) > 0) {
+    totalWeightMachineReading = parseFloat(weightMachineTotals.reading) || 0;
+    totalWeightMachineGrams = parseInt(weightMachineTotals.grams) || 0;
+    totalWeightMachineMilligrams = parseInt(weightMachineTotals.milligrams) || 0;
+    totalWeightMachineConfidence = parseInt(weightMachineTotals.confidence) || 0;
+  } else {
+    // Fallback (e.g. older callers not passing weightMachineTotals):
+    // take the first non-zero item reading instead of summing all of them
+    for (const item of transfer_data) {
+      if (item.weight_machine_reading && parseFloat(item.weight_machine_reading) > 0) {
+        totalWeightMachineReading = parseFloat(item.weight_machine_reading) || 0;
+        totalWeightMachineGrams = parseInt(item.weight_machine_grams) || 0;
+        totalWeightMachineMilligrams = parseInt(item.weight_machine_milligrams) || 0;
+        totalWeightMachineConfidence = parseInt(item.weight_machine_confidence) || 0;
+        break;
+      }
+    }
+  }
+
+  // 🆕 CHANGED: no averaging needed anymore since it's already a single value
+  const avgWeightMachineConfidence = totalWeightMachineConfidence;
 
   const calculatedItemGrossTotal = totalGrossWeight;
   const calculatedPacketGrossTotal = totalGrossWeight + totalPackingWt;
@@ -82,6 +114,9 @@ exports.insert = (
   const finalItemGrossTotal = item_gross_total || calculatedItemGrossTotal;
   const finalPacketGrossTotal = packet_gross_total || calculatedPacketGrossTotal;
   const finalTotalWeightWithBag = total_weight_with_bag || 0;
+
+  // ↓↓↓ everything below this line (pendingData, insertTransferSql,
+  // transferParams, db.query, tag-locking logic, callback) is UNCHANGED ↓↓↓
 
   const pendingData = JSON.stringify({
     transfer_data: transfer_data.map(item => ({
@@ -205,8 +240,6 @@ exports.insert = (
 
     const assignedId = transferResult.insertId;
 
-    // 🆕 FIX: Immediately mark these tags as no longer selectable,
-    // instead of waiting for the salesman's approval to update opening_tags_entry.
     const barcodes = transfer_data.map(item => item.PCode_BarCode).filter(Boolean);
     if (barcodes.length > 0) {
       const placeholders = barcodes.map(() => '?').join(',');

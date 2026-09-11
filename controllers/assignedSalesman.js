@@ -112,7 +112,12 @@ exports.saveAssignedSalesman = (req, res) => {
       capture_image,
       item_gross_total,
       packet_gross_total,
-      total_weight_with_bag
+      total_weight_with_bag,
+      // 🆕 ADDED: pull the already-captured single weight reading out of the payload
+      weight_machine_reading,
+      weight_machine_grams,
+      weight_machine_milligrams,
+      weight_machine_confidence
     } = req.body;
 
     if (!transfer_data || !Array.isArray(transfer_data) || transfer_data.length === 0) {
@@ -161,6 +166,14 @@ exports.saveAssignedSalesman = (req, res) => {
       item_gross_total || 0,
       packet_gross_total || 0,
       total_weight_with_bag || 0,
+      // 🆕 ADDED: pass the single captured weight through as its own object
+      // so the model uses it directly instead of summing item-level readings
+      {
+        reading: weight_machine_reading,
+        grams: weight_machine_grams,
+        milligrams: weight_machine_milligrams,
+        confidence: weight_machine_confidence
+      },
       async (err, result) => {
         if (err) {
           console.error("Database error:", err);
@@ -182,17 +195,15 @@ exports.saveAssignedSalesman = (req, res) => {
           );
         }
 
-        // ===== FIXED: Send Google Calendar event with proper date =====
         if (to_salesman_id) {
           try {
             const salesmanInfo = await getSalesmanEmail(to_salesman_id);
             if (salesmanInfo && salesmanInfo.email) {
               const fromStockPointName = await getStockPointName(from_stock_point_id);
               
-              // --- FIX: Use the actual transfer_date from the request ---
               const assignmentData = {
                 assigned_number,
-                transfer_date: transfer_date, // Use the actual date from request
+                transfer_date: transfer_date,
                 total_items: processedTransferData.length,
                 remarks,
                 salesmanName: salesmanInfo.account_name,
@@ -200,7 +211,6 @@ exports.saveAssignedSalesman = (req, res) => {
               
               console.log(`📅 Creating calendar event with date: ${transfer_date}`);
               
-              // Try to create event with attendee (will send email)
               createCalendarEvent(assignmentData, salesmanInfo.email, fromStockPointName)
                 .then(() => console.log(`📅 Calendar invite sent to ${salesmanInfo.email}`))
                 .catch(calError => console.error('Calendar error:', calError));

@@ -46,7 +46,7 @@ const offerRoutes = require("./routes/OffersRoutes");
 const repairInvoiceRoutes = require("./routes/repairInvoiceRoute");
 const advanceReceiptsRoutes = require("./routes/advanceReceiptsRoutes");
 const ledgerroutes = require("./routes/ledgerroutes"); 
-const salesRateCutsRoutes = require("./routes/salesRateCutsRoutes");
+// const salesRateCutsRoutes = require("./routes/salesRateCutsRoutes");
 const stockPointsRoutes = require("./routes/stockPointsRoutes");
 const warehouseRoutes = require("./routes/warehouseRoutes")
 const stockTransferRoutes = require("./routes/stockTransferRoutes");
@@ -54,6 +54,10 @@ const assignedSalesmanRoutes = require("./routes/assignedSalesmanRoutes");
 const receivedSalesmanRoutes = require("./routes/receivedSalesmanRoutes");
 const visitLogsWarehouseScheduleRoutes = require('./routes/visitLogsWarehouseRoutes');
 const returnToMainStockRoutes = require("./routes/returnToMainStockRoutes");
+
+const salesRateCutsRoutes = require("./routes/salesRateCutsRoutes");
+const salesPaymentRoutes = require("./routes/salesPaymentRoutes");
+const salesLookupRoutes = require("./routes/salesLookupRoutes");
 
 
 
@@ -131,6 +135,11 @@ app.use('/api/visit-logs-warehouse-schedule', visitLogsWarehouseScheduleRoutes);
 
 
 app.use('/api/push', require('./routes/push'));
+
+
+app.use("/", salesRateCutsRoutes);
+app.use("/", salesPaymentRoutes);
+app.use("/", salesLookupRoutes);
 
 
 // Start the server

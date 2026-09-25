@@ -357,44 +357,46 @@ exports.getById = (return_id, callback) => {
         }
 
         const itemsSql = `
-            SELECT 
-                item_id,
-                return_id,
-                assigned_item_id,
-                product_id,
-                PCode_BarCode,
-                packet_barcode,
-                barcode_status,
-                product_name,
-                metal_type,
-                purity,
-                category,
-                sub_category,
-                design_name,
-                qty,
-                gross_weight,
-                cover_wt,
-                card_wt,
-                packing_wt,
-                stone_weight,
-                net_weight,
-                rate,
-                making_charges,
-                stone_price,
-                total_price,
-                image,
-                remarks,
-                weight_machine_reading,
-                weight_machine_grams,
-                weight_machine_milligrams,
-                weight_machine_confidence,
-                weight_machine_raw,
-                weight_extracted_at,
-                created_at
-            FROM return_to_main_stock_items
-            WHERE return_id = ?
-            ORDER BY item_id ASC
-        `;
+    SELECT 
+        ri.item_id,
+        ri.return_id,
+        ri.assigned_item_id,
+        ri.product_id,
+        ri.PCode_BarCode,
+        ri.packet_barcode,
+        ri.barcode_status,
+        ri.product_name,
+        ri.metal_type,
+        ri.purity,
+        ri.category,
+        ri.sub_category,
+        ri.design_name,
+        ri.qty,
+        ri.gross_weight,
+        ri.cover_wt,
+        ri.card_wt,
+        ri.packing_wt,
+        ri.stone_weight,
+        ri.net_weight,
+        ri.rate,
+        ri.making_charges,
+        ri.stone_price,
+        ri.total_price,
+        ri.image,
+        ri.remarks,
+        COALESCE(ote.Received_Status, 'pending') AS Received_Status,
+        ri.weight_machine_reading,
+        ri.weight_machine_grams,
+        ri.weight_machine_milligrams,
+        ri.weight_machine_confidence,
+        ri.weight_machine_raw,
+        ri.weight_extracted_at,
+        ri.created_at
+    FROM return_to_main_stock_items ri
+    LEFT JOIN opening_tags_entry ote ON ri.PCode_BarCode = ote.PCode_BarCode
+    WHERE ri.return_id = ?
+    ORDER BY ri.item_id ASC
+`;
 
         db.query(itemsSql, [return_id], (itemsErr, itemsResults) => {
             if (itemsErr) {

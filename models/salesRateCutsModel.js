@@ -14,22 +14,23 @@ const getSalesRateCutById = async (id) => {
 
 const insertSalesRateCut = async (formData) => {
   const paid_amount = formData.paid_amount ? parseFloat(formData.paid_amount) : 0;
+  const balance_amount = formData.balance_amount ? parseFloat(formData.balance_amount) : 0;
   const rate_cut_wt = formData.rate_cut_wt ? parseFloat(formData.rate_cut_wt) : 0;
   const rate_cut = formData.rate_cut ? parseFloat(formData.rate_cut) : 0;
   const rate_cut_amt = formData.rate_cut_amt ? parseFloat(formData.rate_cut_amt) : 0;
 
-  const balance_amount = formData.balance_amount
-    ? parseFloat(formData.balance_amount)
-    : rate_cut_amt - paid_amount;
-
+  // ✅ paid_wt = paid_amount / rate_cut (same as purchase)
   const paid_wt = paid_amount && rate_cut ? paid_amount / rate_cut : 0;
   const bal_wt = rate_cut_wt - paid_wt;
 
+  // ✅ paid_by logic (mirrors purchase)
+  const paid_by = rate_cut_wt > 0 ? "By Amount" : "By Weight";
+
   const query = `
-    INSERT INTO salesRateCuts
-    (sales_id, invoice, category, total_pure_wt, rate_cut_wt, rate_cut, rate_cut_amt,
-     paid_amount, balance_amount, paid_wt, bal_wt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    INSERT INTO salesRateCuts 
+    (sales_id, invoice, category, total_pure_wt, rate_cut_wt, rate_cut, rate_cut_amt, 
+     paid_amount, balance_amount, paid_wt, bal_wt, paid_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
   const [result] = await db.promise().query(query, [
     formData.sales_id,
@@ -43,6 +44,7 @@ const insertSalesRateCut = async (formData) => {
     balance_amount,
     paid_wt,
     bal_wt,
+    paid_by,
   ]);
 
   return result.insertId;

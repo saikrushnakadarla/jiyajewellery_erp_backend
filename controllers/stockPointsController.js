@@ -2,9 +2,10 @@ const stockPointsModel = require('../models/stockPointsModel');
 const bcrypt = require('bcrypt');
 
 const saltRounds = 10;
+const USER_ID_STEP = 1; // existing data uses 2, 3 ... so step is 1. Change here if you need +2.
 
 const createStockPoint = (req, res) => {
-  const { stock_point_name, location, warehouse_id, description, user_name, password, status, default_status } = req.body;
+  const { stock_point_name, location, warehouse_id, description, user_name, password, status, default_status, salesman_ids } = req.body;
   
   if (!stock_point_name || !location || !warehouse_id) {
     return res.status(400).send({ 
@@ -24,12 +25,16 @@ const createStockPoint = (req, res) => {
       });
     }
     
-    // Get next user_id (increment by 2)
-    stockPointsModel.getNextUserId(async (err, nextUserId) => {
+    // Get next user_id
+    stockPointsModel.getNextUserId(async (err, rows) => {
       if (err) {
         console.error(err);
         return res.status(500).send({ message: 'Error generating user ID' });
       }
+
+      // getNextUserId returns rows like [{ max_user_id: 3 }] -> read the number out of it
+      const maxUserId = Array.isArray(rows) ? rows[0]?.max_user_id : rows;
+      const nextUserId = (Number(maxUserId) || 1) + USER_ID_STEP;
       
       // Hash password if provided
       let hashedPassword = null;
@@ -59,10 +64,18 @@ const createStockPoint = (req, res) => {
           console.error(err);
           return res.status(500).send({ message: 'Error inserting data' });
         }
-        res.status(201).send({ 
-          id: result.insertId, 
-          user_id: nextUserId,
-          message: 'Stock point created successfully' 
+
+        // Save the selected salesmen for this new stock point
+        stockPointsModel.setSalesmen(result.insertId, salesman_ids, (sErr) => {
+          if (sErr) {
+            console.error(sErr);
+            return res.status(500).send({ message: 'Stock point saved, but error saving salesmen' });
+          }
+          res.status(201).send({ 
+            id: result.insertId, 
+            user_id: nextUserId,
+            message: 'Stock point created successfully' 
+          });
         });
       });
     });
@@ -75,7 +88,7 @@ const getAllStockPoints = (req, res) => {
       console.error(err);
       return res.status(500).send({ message: 'Error fetching data' });
     }
-    // Don't send actual passwords in response
+    // Don't send actual passwords in response (salesman_ids is included via ...item)
     const sanitizedResults = results.map(item => ({
       ...item,
       password: item.password ? '***HIDDEN***' : null
@@ -113,9 +126,20 @@ const getStockPointsByWarehouse = (req, res) => {
   });
 };
 
+const getSalesmenByStockPointId = (req, res) => {
+  const { id } = req.params;
+  stockPointsModel.getSalesmenByStockPointId(id, (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).send({ message: 'Error fetching salesmen' });
+    }
+    res.status(200).send(results.map((r) => r.account_id));
+  });
+};
+
 const updateStockPointById = (req, res) => {
   const { id } = req.params;
-  const { stock_point_name, location, warehouse_id, description, user_name, password, status, default_status } = req.body;
+  const { stock_point_name, location, warehouse_id, description, user_name, password, status, default_status, salesman_ids } = req.body;
   
   if (!stock_point_name || !location || !warehouse_id) {
     return res.status(400).send({ 
@@ -170,7 +194,15 @@ const updateStockPointById = (req, res) => {
           console.error(err);
           return res.status(500).send({ message: 'Error updating data' });
         }
-        res.status(200).send({ message: 'Stock point updated successfully' });
+
+        // Replace salesmen with the edited selection
+        stockPointsModel.setSalesmen(id, salesman_ids, (sErr) => {
+          if (sErr) {
+            console.error(sErr);
+            return res.status(500).send({ message: 'Stock point updated, but error saving salesmen' });
+          }
+          res.status(200).send({ message: 'Stock point updated successfully' });
+        });
       });
     });
   });
@@ -220,6 +252,7 @@ module.exports = {
   getAllStockPoints, 
   getStockPointById,
   getStockPointsByWarehouse,
+  getSalesmenByStockPointId,
   updateStockPointById, 
   deleteStockPointById,
   updateDefaultStockPoint

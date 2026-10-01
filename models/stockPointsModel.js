@@ -5,7 +5,7 @@ const createStockPoint = (data, callback) => {
     INSERT INTO stock_points (stock_point_name, location, warehouse_id, description, user_id, user_name, password, status, default_status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
-  
+
   db.query(sql, [
     data.stock_point_name,
     data.location,
@@ -19,9 +19,13 @@ const createStockPoint = (data, callback) => {
   ], callback);
 };
 
+// salesman_ids is returned as a comma separated string, e.g. "77,72" (or NULL)
 const getAllStockPoints = (callback) => {
   const sql = `
-    SELECT sp.*, w.warehouse_name 
+    SELECT sp.*, w.warehouse_name,
+      (SELECT GROUP_CONCAT(sps.account_id ORDER BY sps.id)
+         FROM stock_point_salesmen sps
+        WHERE sps.stock_point_id = sp.stock_point_id) AS salesman_ids
     FROM stock_points sp
     LEFT JOIN warehouses w ON sp.warehouse_id = w.warehouse_id
     ORDER BY sp.created_at DESC
@@ -31,7 +35,10 @@ const getAllStockPoints = (callback) => {
 
 const getStockPointById = (id, callback) => {
   const sql = `
-    SELECT sp.*, w.warehouse_name 
+    SELECT sp.*, w.warehouse_name,
+      (SELECT GROUP_CONCAT(sps.account_id ORDER BY sps.id)
+         FROM stock_point_salesmen sps
+        WHERE sps.stock_point_id = sp.stock_point_id) AS salesman_ids
     FROM stock_points sp
     LEFT JOIN warehouses w ON sp.warehouse_id = w.warehouse_id
     WHERE sp.stock_point_id = ?
@@ -60,7 +67,7 @@ const updateStockPointById = (id, data, callback) => {
         status = ?,
         default_status = ?
   `;
-  
+
   const params = [
     data.stock_point_name,
     data.location,
@@ -71,22 +78,26 @@ const updateStockPointById = (id, data, callback) => {
     data.status || 'active',
     data.default_status || 'not_applied'
   ];
-  
+
   // Only update password if provided
   if (data.password) {
     sql += `, password = ?`;
     params.push(data.password);
   }
-  
+
   sql += ` WHERE stock_point_id = ?`;
   params.push(id);
-  
+
   db.query(sql, params, callback);
 };
 
 const deleteStockPointById = (id, callback) => {
-  const sql = 'DELETE FROM stock_points WHERE stock_point_id = ?';
-  db.query(sql, [id], callback);
+  // Remove salesman links first (safe even if FK cascade is missing)
+  db.query('DELETE FROM stock_point_salesmen WHERE stock_point_id = ?', [id], (err) => {
+    if (err) return callback(err);
+    const sql = 'DELETE FROM stock_points WHERE stock_point_id = ?';
+    db.query(sql, [id], callback);
+  });
 };
 
 const checkDuplicateStockPoint = (name, warehouseId, excludeId = null, callback) => {
@@ -96,12 +107,12 @@ const checkDuplicateStockPoint = (name, warehouseId, excludeId = null, callback)
     WHERE stock_point_name = ? AND warehouse_id = ?
   `;
   const params = [name, warehouseId];
-  
+
   if (excludeId) {
     sql += ' AND stock_point_id != ?';
     params.push(excludeId);
   }
-  
+
   db.query(sql, params, callback);
 };
 
@@ -132,6 +143,36 @@ const setDefaultStockPoint = (id, callback) => {
   db.query(sql, [id], callback);
 };
 
+/* ---------------- Salesman mapping ---------------- */
+
+// Replace ALL salesmen of a stock point with the given list of account_ids
+const setSalesmen = (stockPointId, salesmanIds, callback) => {
+  db.query('DELETE FROM stock_point_salesmen WHERE stock_point_id = ?', [stockPointId], (err) => {
+    if (err) return callback(err);
+
+    const ids = [...new Set((Array.isArray(salesmanIds) ? salesmanIds : [])
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n > 0))];
+
+    if (ids.length === 0) return callback(null);
+
+    const rows = ids.map((accountId) => [stockPointId, accountId]);
+    db.query(
+      'INSERT INTO stock_point_salesmen (stock_point_id, account_id) VALUES ?',
+      [rows],
+      callback
+    );
+  });
+};
+
+const getSalesmenByStockPointId = (stockPointId, callback) => {
+  db.query(
+    'SELECT account_id FROM stock_point_salesmen WHERE stock_point_id = ? ORDER BY id',
+    [stockPointId],
+    callback
+  );
+};
+
 module.exports = { 
   createStockPoint, 
   getAllStockPoints, 
@@ -142,5 +183,7 @@ module.exports = {
   checkDuplicateStockPoint,
   getNextUserId,
   resetAllDefaultStatus,
-  setDefaultStockPoint
+  setDefaultStockPoint,
+  setSalesmen,
+  getSalesmenByStockPointId
 };

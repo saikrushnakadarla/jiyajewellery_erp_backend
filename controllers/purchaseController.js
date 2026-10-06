@@ -328,6 +328,85 @@ const updateRemark = (req, res) => {
   });
 };
 
+// ===================== NEW: GSTR REPORT (GET) =====================
+const COMPANY_STATE_CODE = process.env.COMPANY_STATE_CODE || "36"; // set your own state code (36 = Telangana)
+
+const getGstrPurchaseReport = (req, res) => {
+  const { from_date, to_date } = req.query;
+
+  purchaseModel.getGstrPurchaseData(from_date, to_date, (err, rows) => {
+    if (err) {
+      console.error("Error fetching GSTR purchase data:", err);
+      return res.status(500).json({ message: "Failed to fetch GSTR purchase data", error: err.message });
+    }
+
+    const num = (v) => parseFloat(v) || 0;
+    const round2 = (v) => Math.round(v * 100) / 100;
+
+    const b2b = [];
+    const unregistered = [];
+    const rateSummary = {};
+    const totals = { taxable: 0, cgst: 0, sgst: 0, igst: 0, tax: 0, invoiceValue: 0 };
+
+    rows.forEach((r) => {
+      const taxable = num(r.total_mc) + num(r.total_amount) + num(r.final_stone_amount);
+      const tax = num(r.tax_amt);
+      const rate = num(String(r.tax_slab || "").replace(/[^\d.]/g, ""));
+
+      const supplierState = r.gst_in ? String(r.gst_in).substring(0, 2) : "";
+      const isInterState = supplierState && supplierState !== COMPANY_STATE_CODE;
+
+      const line = {
+        invoice: r.invoice,
+        bill_no: r.bill_no,
+        date: r.date,
+        bill_date: r.bill_date,
+        account_name: r.account_name,
+        gst_in: r.gst_in,
+        hsn_code: r.hsn_code,
+        category: r.category,
+        pcs: r.pcs,
+        taxable_value: round2(taxable),
+        tax_rate: rate,
+        cgst: isInterState ? 0 : round2(tax / 2),
+        sgst: isInterState ? 0 : round2(tax / 2),
+        igst: isInterState ? round2(tax) : 0,
+        total_tax: round2(tax),
+        net_amt: round2(num(r.net_amt)),
+        supply_type: isInterState ? "Inter-State" : "Intra-State",
+      };
+
+      (r.gst_in ? b2b : unregistered).push(line);
+
+      if (!rateSummary[rate]) {
+        rateSummary[rate] = { tax_rate: rate, taxable_value: 0, cgst: 0, sgst: 0, igst: 0 };
+      }
+      rateSummary[rate].taxable_value += line.taxable_value;
+      rateSummary[rate].cgst += line.cgst;
+      rateSummary[rate].sgst += line.sgst;
+      rateSummary[rate].igst += line.igst;
+
+      totals.taxable += line.taxable_value;
+      totals.cgst += line.cgst;
+      totals.sgst += line.sgst;
+      totals.igst += line.igst;
+      totals.tax += line.total_tax;
+      totals.invoiceValue += line.net_amt;
+    });
+
+    Object.keys(totals).forEach((k) => (totals[k] = round2(totals[k])));
+    const summary = Object.values(rateSummary).map((s) => ({
+      ...s,
+      taxable_value: round2(s.taxable_value),
+      cgst: round2(s.cgst),
+      sgst: round2(s.sgst),
+      igst: round2(s.igst),
+    }));
+
+    res.status(200).json({ b2b, unregistered, rateSummary: summary, totals });
+  });
+};
+
 module.exports = {
   updatePurchase,
   savePurchase,
@@ -338,5 +417,6 @@ module.exports = {
   getAllUniquePurchaseDetails,
   getRepairDetailsByInvoiceNumber,
   getAllRepairDetailsByInvoiceNumber,
-  updateRemark
+  updateRemark,
+  getGstrPurchaseReport // NEW
 };

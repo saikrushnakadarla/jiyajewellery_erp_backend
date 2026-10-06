@@ -595,6 +595,28 @@ const updateRemark = (productId, remark, callback) => {
   db.query(sql, [remark, productId], callback);
 };
 
+// ===================== NEW: GSTR REPORT (GET) =====================
+// GSTR (inward supplies / ITC) – purchase data filtered by date range
+const getGstrPurchaseData = (fromDate, toDate, callback) => {
+  let sql = `
+    SELECT
+      id, invoice, bill_no, date, bill_date, account_name, gst_in,
+      category, metal_type, hsn_code, pcs, gross_weight, net_weight,
+      total_mc, total_amount, final_stone_amount, tax_slab, tax_amt, net_amt, hm_charges
+    FROM purchases
+    WHERE 1 = 1
+  `;
+  const params = [];
+
+  if (fromDate && toDate) {
+    sql += ` AND date BETWEEN ? AND ?`;
+    params.push(fromDate, toDate);
+  }
+
+  sql += ` ORDER BY date ASC, invoice ASC`;
+  db.query(sql, params, callback);
+};
+
 
 
 module.exports = {
@@ -609,5 +631,6 @@ module.exports = {
   getAllRepairDetailsByInvoiceNumber,
   insertStoneDetails,
   checkInvoiceExists,
-  updateRemark
+  updateRemark,
+  getGstrPurchaseData // NEW
 };

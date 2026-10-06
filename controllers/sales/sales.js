@@ -2,6 +2,7 @@
 // const db = require("./../../db");
 const { time } = require("console");
 const repairModel = require("./../../models/sales/sales");
+const db = require("./../../db"); // FIX: required by getRepairDetailsById (was commented out above)
 const fs = require('fs');
 const path = require('path');
 
@@ -416,8 +417,89 @@ exports.getRepairDetailsById = (req, res) => {
   });
 };
 
+// ===================== NEW: GSTR REPORT (GET) =====================
+const COMPANY_STATE_CODE = process.env.COMPANY_STATE_CODE || "36"; // set your own state code (36 = Telangana)
 
+exports.getGstrSalesReport = (req, res) => {
+  const { from_date, to_date } = req.query;
 
+  repairModel.getGstrSalesData(from_date, to_date, (err, rows) => {
+    if (err) {
+      console.error("Error fetching GSTR sales data:", err.message);
+      return res.status(500).json({ message: "Failed to fetch GSTR sales data", error: err.message });
+    }
 
+    const num = (v) => parseFloat(v) || 0;
+    const round2 = (v) => Math.round(v * 100) / 100;
 
+    const b2b = [];
+    const b2c = [];
+    const rateSummary = {};
+    const totals = { taxable: 0, cgst: 0, sgst: 0, igst: 0, tax: 0, invoiceValue: 0 };
 
+    rows.forEach((r) => {
+      const taxable = num(r.piece_taxable_amt);
+      const tax = num(r.tax_amt);
+      const rate = num(String(r.tax_percent).replace(/[^\d.]/g, ""));
+
+      // Place of supply: GSTIN prefix first, then state_code
+      const recipientState = r.gst_in ? String(r.gst_in).substring(0, 2) : String(r.state_code || "");
+      const isInterState = recipientState && recipientState !== COMPANY_STATE_CODE;
+
+      const line = {
+        invoice_number: r.invoice_number,
+        date: r.date,
+        account_name: r.account_name,
+        gst_in: r.gst_in,
+        place_of_supply: recipientState || null,
+        product_name: r.product_name,
+        qty: r.qty,
+        taxable_value: round2(taxable),
+        tax_rate: rate,
+        cgst: isInterState ? 0 : round2(tax / 2),
+        sgst: isInterState ? 0 : round2(tax / 2),
+        igst: isInterState ? round2(tax) : 0,
+        total_tax: round2(tax),
+        line_total: round2(num(r.total_price)),
+        invoice_value: round2(num(r.net_amount)),
+        supply_type: isInterState ? "Inter-State" : "Intra-State",
+      };
+
+      (r.gst_in ? b2b : b2c).push(line);
+
+      if (!rateSummary[rate]) {
+        rateSummary[rate] = { tax_rate: rate, taxable_value: 0, cgst: 0, sgst: 0, igst: 0 };
+      }
+      rateSummary[rate].taxable_value += line.taxable_value;
+      rateSummary[rate].cgst += line.cgst;
+      rateSummary[rate].sgst += line.sgst;
+      rateSummary[rate].igst += line.igst;
+
+      totals.taxable += line.taxable_value;
+      totals.cgst += line.cgst;
+      totals.sgst += line.sgst;
+      totals.igst += line.igst;
+      totals.tax += line.total_tax;
+    });
+
+    // invoice value is stored on every row, so count it once per invoice
+    const seen = new Set();
+    rows.forEach((r) => {
+      if (!seen.has(r.invoice_number)) {
+        seen.add(r.invoice_number);
+        totals.invoiceValue += num(r.net_amount);
+      }
+    });
+
+    Object.keys(totals).forEach((k) => (totals[k] = round2(totals[k])));
+    const summary = Object.values(rateSummary).map((s) => ({
+      ...s,
+      taxable_value: round2(s.taxable_value),
+      cgst: round2(s.cgst),
+      sgst: round2(s.sgst),
+      igst: round2(s.igst),
+    }));
+
+    res.status(200).json({ b2b, b2c, rateSummary: summary, totals, invoiceCount: seen.size });
+  });
+};

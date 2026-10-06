@@ -1058,3 +1058,26 @@ exports.getRepairDetailsById = (id, callback) => {
   `;
   db.query(sql, [id], callback);
 };
+
+// ===================== NEW: GSTR REPORT (GET) =====================
+// GSTR-1 (outward supplies) – line level data filtered by date range
+exports.getGstrSalesData = (fromDate, toDate, callback) => {
+  let sql = `
+    SELECT
+      id, invoice_number, date, account_name, gst_in, state, state_code,
+      product_name, metal_type, category, qty, gross_weight,
+      piece_taxable_amt, tax_percent, tax_amt, total_price,
+      taxable_amount, tax_amount, net_amount, net_bill_amount, transaction_status
+    FROM repair_details
+    WHERE transaction_status IN ('Sales', 'ConvertedInvoice', 'ConvertedRepairInvoice')
+  `;
+  const params = [];
+
+  if (fromDate && toDate) {
+    sql += ` AND date BETWEEN ? AND ?`;
+    params.push(fromDate, toDate);
+  }
+
+  sql += ` ORDER BY date ASC, invoice_number ASC`;
+  db.query(sql, params, callback);
+};

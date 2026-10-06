@@ -54,5 +54,9 @@ router.put('/update-order-status', repairController.updateOrderStatus);
 
 router.get("/get-repair-details-by-id/:id", repairController.getRepairDetailsById);
 
+
+// ---- Sales router file ----
+router.get("/gstr-report", repairController.getGstrSalesReport);
+
 module.exports = router;
 

@@ -14,5 +14,7 @@ router.get("/get-unique-purchase-details", purchaseController.getAllUniquePurcha
 router.get("/get-purchase-details/:invoice", purchaseController.getRepairDetailsByInvoiceNumber);
 router.get("/purchase-details/:invoice", purchaseController.getAllRepairDetailsByInvoiceNumber);
 
+router.get("/gstr-report", purchaseController.getGstrPurchaseReport);
+
 router.post("/update-remark", purchaseController.updateRemark);
 module.exports = router;

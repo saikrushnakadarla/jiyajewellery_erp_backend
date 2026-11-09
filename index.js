@@ -60,6 +60,9 @@ const salesPaymentRoutes = require("./routes/salesPaymentRoutes");
 const salesLookupRoutes = require("./routes/salesLookupRoutes");
 
 
+const deliveryRoutes = require("./routes/deliveryRoutes");
+
+
 
 
 
@@ -93,6 +96,7 @@ app.use('/', metalTypeRoutes);
 app.use('/', designMasterRoutes);
 app.use('/', accountRoutes);
 app.use('/', accountGroupRoutes);
+app.use('/', deliveryRoutes);
 app.use('/', receiptRoutes);
 app.use('/', paymentRoutes);
 app.use('/', salesRateCutsRoutes);

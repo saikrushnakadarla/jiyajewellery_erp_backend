@@ -16,10 +16,11 @@ exports.insert = (
   item_gross_total = 0,
   packet_gross_total = 0,
   total_weight_with_bag = 0,
-  weightMachineTotals = null,   // 🆕 ADDED: single captured weight object { reading, grams, milligrams, confidence }
+  weightMachineTotals = null,   // single captured weight object { reading, grams, milligrams, confidence }
+  delivery_agent_id = null,     // ===== NEW (Delivery Agent) =====
   callback
 ) => {
-  // Handle optional parameters (unchanged existing shim logic)
+  // Handle optional parameters (existing shim logic)
   if (typeof from_user_id === 'function') {
     callback = from_user_id;
     from_user_id = null;
@@ -29,6 +30,7 @@ exports.insert = (
     packet_gross_total = 0;
     total_weight_with_bag = 0;
     weightMachineTotals = null;
+    delivery_agent_id = null; // NEW
   }
   if (typeof to_user_id === 'function' && callback) {
     callback = to_user_id;
@@ -38,6 +40,7 @@ exports.insert = (
     packet_gross_total = 0;
     total_weight_with_bag = 0;
     weightMachineTotals = null;
+    delivery_agent_id = null; // NEW
   }
   if (typeof capture_image === 'function' && callback) {
     callback = capture_image;
@@ -46,13 +49,21 @@ exports.insert = (
     packet_gross_total = 0;
     total_weight_with_bag = 0;
     weightMachineTotals = null;
+    delivery_agent_id = null; // NEW
   }
-  // 🆕 ADDED: shim for older callers that stop at total_weight_with_bag
-  // (i.e. pass a function where weightMachineTotals is expected)
+  // Shim for older callers that stop at total_weight_with_bag
   if (typeof weightMachineTotals === 'function' && callback === undefined) {
     callback = weightMachineTotals;
     weightMachineTotals = null;
+    delivery_agent_id = null; // NEW
   }
+  // ===== NEW (Delivery Agent) =====
+  // Shim for callers that pass weightMachineTotals but no delivery_agent_id
+  if (typeof delivery_agent_id === 'function' && callback === undefined) {
+    callback = delivery_agent_id;
+    delivery_agent_id = null;
+  }
+  // ================================
 
   if (!Array.isArray(transfer_data) || transfer_data.length === 0) {
     return callback(new Error("Invalid transfer_data array"));
@@ -61,15 +72,17 @@ exports.insert = (
   const assigned_number = reference_number;
   const transfer_date_formatted = transfer_date || new Date().toISOString().split('T')[0];
 
+  // ===== NEW (Delivery Agent): NULL when "Without Delivery Agent" =====
+  const finalDeliveryAgentId = delivery_agent_id ? parseInt(delivery_agent_id) : null;
+
   let totalItems = transfer_data.length;
   let totalQuantity = 0;
   let totalGrossWeight = 0;
   let totalNetWeight = 0;
   let totalPackingWt = 0;
 
-  // 🆕 CHANGED: these are no longer accumulated in the forEach loop below.
-  // They get set once, either from weightMachineTotals or from the first
-  // non-zero item reading — never summed across items.
+  // Set once, either from weightMachineTotals or from the first
+  // non-zero item reading, never summed across items.
   let totalWeightMachineReading = 0;
   let totalWeightMachineGrams = 0;
   let totalWeightMachineMilligrams = 0;
@@ -80,20 +93,14 @@ exports.insert = (
     totalGrossWeight += parseFloat(item.gross_weight) || 0;
     totalNetWeight += parseFloat(item.net_weight) || 0;
     totalPackingWt += parseFloat(item.packing_wt) || 0;
-    // ❌ REMOVED: the four totalWeightMachine* += lines that used to sum
-    // per-item readings here (this was the root cause of the doubling bug)
   });
 
-  // 🆕 ADDED: derive the transfer-level weight from the single captured
-  // reading instead of summing item-level values
   if (weightMachineTotals && parseFloat(weightMachineTotals.reading) > 0) {
     totalWeightMachineReading = parseFloat(weightMachineTotals.reading) || 0;
     totalWeightMachineGrams = parseInt(weightMachineTotals.grams) || 0;
     totalWeightMachineMilligrams = parseInt(weightMachineTotals.milligrams) || 0;
     totalWeightMachineConfidence = parseInt(weightMachineTotals.confidence) || 0;
   } else {
-    // Fallback (e.g. older callers not passing weightMachineTotals):
-    // take the first non-zero item reading instead of summing all of them
     for (const item of transfer_data) {
       if (item.weight_machine_reading && parseFloat(item.weight_machine_reading) > 0) {
         totalWeightMachineReading = parseFloat(item.weight_machine_reading) || 0;
@@ -105,7 +112,6 @@ exports.insert = (
     }
   }
 
-  // 🆕 CHANGED: no averaging needed anymore since it's already a single value
   const avgWeightMachineConfidence = totalWeightMachineConfidence;
 
   const calculatedItemGrossTotal = totalGrossWeight;
@@ -114,9 +120,6 @@ exports.insert = (
   const finalItemGrossTotal = item_gross_total || calculatedItemGrossTotal;
   const finalPacketGrossTotal = packet_gross_total || calculatedPacketGrossTotal;
   const finalTotalWeightWithBag = total_weight_with_bag || 0;
-
-  // ↓↓↓ everything below this line (pendingData, insertTransferSql,
-  // transferParams, db.query, tag-locking logic, callback) is UNCHANGED ↓↓↓
 
   const pendingData = JSON.stringify({
     transfer_data: transfer_data.map(item => ({
@@ -149,6 +152,8 @@ exports.insert = (
     })),
     from_stock_point_id: from_stock_point_id,
     to_salesman_id: to_salesman_id,
+    // ===== NEW (Delivery Agent) =====
+    delivery_agent_id: finalDeliveryAgentId,
     transfer_date: transfer_date_formatted,
     remarks: remarks,
     created_by: created_by,
@@ -164,6 +169,8 @@ exports.insert = (
     total_net_weight: totalNetWeight
   });
 
+  // NEW (Delivery Agent): `delivery_agent_id` column added after
+  // weight_machine_raw, with one extra "?" placeholder (25 "?" in total).
   const insertTransferSql = `
     INSERT INTO assigned_salesman_transfers (
       assigned_number,
@@ -190,10 +197,11 @@ exports.insert = (
       weight_machine_milligrams,
       weight_machine_confidence,
       weight_machine_raw,
+      delivery_agent_id,
       weight_extracted_at,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
   `;
 
   let latestWeightExtractedAt = null;
@@ -229,7 +237,8 @@ exports.insert = (
     totalWeightMachineMilligrams || 0,
     avgWeightMachineConfidence || 0,
     null,
-    latestWeightExtractedAt
+    // ===== NEW (Delivery Agent) =====
+    finalDeliveryAgentId
   ];
 
   db.query(insertTransferSql, transferParams, (err, transferResult) => {
@@ -260,6 +269,8 @@ exports.insert = (
     console.log(`✅ Assignment ${assigned_number} saved as PENDING (ID: ${assignedId})`);
     console.log(`📦 ${totalItems} items pending approval`);
     console.log(`📊 Total weight machine reading: ${totalWeightMachineReading}g`);
+    // NEW (Delivery Agent)
+    console.log(`🚚 Delivery agent id saved: ${finalDeliveryAgentId || 'none'}`);
 
     callback(null, { transfer_id: assignedId, transfer_number: assigned_number });
   });

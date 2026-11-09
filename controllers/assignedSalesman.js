@@ -113,11 +113,12 @@ exports.saveAssignedSalesman = (req, res) => {
       item_gross_total,
       packet_gross_total,
       total_weight_with_bag,
-      // 🆕 ADDED: pull the already-captured single weight reading out of the payload
       weight_machine_reading,
       weight_machine_grams,
       weight_machine_milligrams,
-      weight_machine_confidence
+      weight_machine_confidence,
+      // ===== NEW (Delivery Agent) =====
+      delivery_agent_id
     } = req.body;
 
     if (!transfer_data || !Array.isArray(transfer_data) || transfer_data.length === 0) {
@@ -135,6 +136,8 @@ exports.saveAssignedSalesman = (req, res) => {
     const assigned_number = reference_number || generateAssignedNumber();
     console.log(`📦 Processing assignment: ${assigned_number}`);
     console.log(`📅 Transfer date received: ${transfer_date}`);
+    // ===== NEW (Delivery Agent) =====
+    console.log(`🚚 Delivery agent id: ${delivery_agent_id || 'none (direct to salesman)'}`);
 
     let savedCaptureImagePath = null;
     if (capture_image) {
@@ -166,14 +169,14 @@ exports.saveAssignedSalesman = (req, res) => {
       item_gross_total || 0,
       packet_gross_total || 0,
       total_weight_with_bag || 0,
-      // 🆕 ADDED: pass the single captured weight through as its own object
-      // so the model uses it directly instead of summing item-level readings
       {
         reading: weight_machine_reading,
         grams: weight_machine_grams,
         milligrams: weight_machine_milligrams,
         confidence: weight_machine_confidence
       },
+      // ===== NEW (Delivery Agent): NULL when "Without Delivery Agent" =====
+      delivery_agent_id ? parseInt(delivery_agent_id) : null,
       async (err, result) => {
         if (err) {
           console.error("Database error:", err);
@@ -229,7 +232,9 @@ exports.saveAssignedSalesman = (req, res) => {
           salesman_status: 'pending',
           item_gross_total: item_gross_total || 0,
           packet_gross_total: packet_gross_total || 0,
-          total_weight_with_bag: total_weight_with_bag || 0
+          total_weight_with_bag: total_weight_with_bag || 0,
+          // ===== NEW (Delivery Agent) =====
+          delivery_agent_id: delivery_agent_id ? parseInt(delivery_agent_id) : null
         });
       }
     );

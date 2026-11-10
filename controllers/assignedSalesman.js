@@ -117,7 +117,6 @@ exports.saveAssignedSalesman = (req, res) => {
       weight_machine_grams,
       weight_machine_milligrams,
       weight_machine_confidence,
-      // ===== NEW (Delivery Agent) =====
       delivery_agent_id
     } = req.body;
 
@@ -136,7 +135,6 @@ exports.saveAssignedSalesman = (req, res) => {
     const assigned_number = reference_number || generateAssignedNumber();
     console.log(`📦 Processing assignment: ${assigned_number}`);
     console.log(`📅 Transfer date received: ${transfer_date}`);
-    // ===== NEW (Delivery Agent) =====
     console.log(`🚚 Delivery agent id: ${delivery_agent_id || 'none (direct to salesman)'}`);
 
     let savedCaptureImagePath = null;
@@ -154,7 +152,8 @@ exports.saveAssignedSalesman = (req, res) => {
     });
 
     const notificationKey = `assignment_${assigned_number}_${to_salesman_id}`;
-    
+    const finalDeliveryAgentId = delivery_agent_id ? parseInt(delivery_agent_id) : null;
+
     assignedSalesmanModel.insert(
       processedTransferData,
       from_stock_point_id,
@@ -175,14 +174,14 @@ exports.saveAssignedSalesman = (req, res) => {
         milligrams: weight_machine_milligrams,
         confidence: weight_machine_confidence
       },
-      // ===== NEW (Delivery Agent): NULL when "Without Delivery Agent" =====
-      delivery_agent_id ? parseInt(delivery_agent_id) : null,
+      finalDeliveryAgentId,
       async (err, result) => {
         if (err) {
           console.error("Database error:", err);
           return res.status(500).json({ message: "Error saving assigned salesman data", error: err });
         }
         
+        // Existing Accept / Reject notification
         if (to_salesman_id && !notificationCache.has(notificationKey)) {
           notificationCache.add(notificationKey);
           setTimeout(() => {
@@ -195,6 +194,18 @@ exports.saveAssignedSalesman = (req, res) => {
             processedTransferData,
             from_stock_point_id,
             result.transfer_id
+          );
+        }
+
+        // NEW: Delivery agent notification (with "Received" button in the dashboard)
+        if (finalDeliveryAgentId && to_salesman_id) {
+          createDeliveryAgentNotification(
+            to_salesman_id,
+            assigned_number,
+            processedTransferData,
+            from_stock_point_id,
+            result.transfer_id,
+            finalDeliveryAgentId
           );
         }
 
@@ -233,8 +244,8 @@ exports.saveAssignedSalesman = (req, res) => {
           item_gross_total: item_gross_total || 0,
           packet_gross_total: packet_gross_total || 0,
           total_weight_with_bag: total_weight_with_bag || 0,
-          // ===== NEW (Delivery Agent) =====
-          delivery_agent_id: delivery_agent_id ? parseInt(delivery_agent_id) : null
+          delivery_agent_id: finalDeliveryAgentId,
+          delivery_status: finalDeliveryAgentId ? 'pending' : null
         });
       }
     );
@@ -640,6 +651,110 @@ exports.getItemsWithWeightsByAssignment = (req, res) => {
       success: true, 
       data: results,
       count: results.length
+    });
+  });
+};
+
+
+
+// ==================== DELIVERY AGENT NOTIFICATION ====================
+const createDeliveryAgentNotification = (salesmanId, assignedNumber, transferData, fromStockPointId, transferId, deliveryAgentId) => {
+  const db = require("../db");
+
+  // avoid duplicates
+  const checkSql = `SELECT id FROM notifications WHERE user_id = ? AND related_id = ? AND type = 'delivery_agent_assignment'`;
+  db.query(checkSql, [salesmanId, transferId], (checkErr, checkResults) => {
+    if (checkErr) {
+      console.error('Error checking delivery notification:', checkErr);
+      return;
+    }
+    if (checkResults.length > 0) return;
+
+    db.query(
+      'SELECT full_name, agent_code FROM delivery_agents WHERE id = ?',
+      [deliveryAgentId],
+      (agentErr, agentResult) => {
+        if (agentErr) {
+          console.error('Error fetching delivery agent:', agentErr);
+          return;
+        }
+
+        const agentName = agentResult.length ? agentResult[0].full_name : 'Delivery Agent';
+        const agentCode = agentResult.length ? agentResult[0].agent_code : '';
+
+        db.query(
+          'SELECT stock_point_name FROM stock_points WHERE stock_point_id = ?',
+          [fromStockPointId],
+          (spErr, spResult) => {
+            const stockPointName = spErr || spResult.length === 0 ? 'Stock Room' : spResult[0].stock_point_name;
+            const itemCount = transferData.length;
+
+            const title = `🚚 Delivery Agent Assigned #${assignedNumber}`;
+            const message = `${itemCount} item(s) from ${stockPointName} are being delivered to you by ${agentName}${agentCode ? ` (${agentCode})` : ''}. Please click Received once you get them.`;
+
+            db.query(
+              `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at)
+               VALUES (?, 'salesman', ?, ?, 'delivery_agent_assignment', ?, NOW())`,
+              [salesmanId, title, message, transferId],
+              (notifErr) => {
+                if (notifErr) {
+                  console.error('Error creating delivery notification:', notifErr);
+                } else {
+                  console.log(`✅ Delivery notification sent to salesman ${salesmanId} for ${assignedNumber}`);
+                }
+              }
+            );
+          }
+        );
+      }
+    );
+  });
+};
+
+// ==================== GET PENDING DELIVERIES ====================
+exports.getPendingDeliveries = (req, res) => {
+  const { salesman_id } = req.query;
+
+  if (!salesman_id) {
+    return res.status(400).json({ message: "Salesman ID is required" });
+  }
+
+  assignedSalesmanModel.getPendingDeliveriesBySalesman(salesman_id, (err, results) => {
+    if (err) {
+      console.error("Error fetching pending deliveries:", err);
+      return res.status(500).json({ message: "Error fetching pending deliveries" });
+    }
+    res.json(results);
+  });
+};
+
+// ==================== MARK DELIVERY AS RECEIVED ====================
+exports.updateDeliveryStatus = (req, res) => {
+  const { transfer_id } = req.params;
+  const { status } = req.body;
+
+  if (!transfer_id) {
+    return res.status(400).json({ message: "Transfer ID is required" });
+  }
+
+  if (status !== 'received') {
+    return res.status(400).json({ message: "Status must be 'received'" });
+  }
+
+  assignedSalesmanModel.updateDeliveryStatus(transfer_id, status, (err, result) => {
+    if (err) {
+      console.error("Error updating delivery status:", err);
+      return res.status(500).json({ message: "Error updating delivery status" });
+    }
+
+    if (result.affectedRows === 0) {
+      return res.status(409).json({ message: "Delivery is not pending or has no delivery agent" });
+    }
+
+    res.json({
+      message: "Delivery marked as received",
+      transfer_id: transfer_id,
+      delivery_status: 'received'
     });
   });
 };

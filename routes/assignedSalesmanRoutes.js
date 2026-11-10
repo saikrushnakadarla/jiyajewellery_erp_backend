@@ -19,6 +19,11 @@ router.get("/get-pending-assignments", assignedSalesmanController.getPendingAssi
 router.put("/update-salesman-status/:transfer_id", assignedSalesmanController.updateSalesmanStatus);
 
 
+// NEW: Delivery agent (logistic partner) flow
+router.get("/get-pending-deliveries", assignedSalesmanController.getPendingDeliveries);
+router.put("/update-delivery-status/:transfer_id", assignedSalesmanController.updateDeliveryStatus);
+
+
 // Weight routes for items
 router.put("/update-item-weight/:item_id", assignedSalesmanController.updateItemWeight);
 router.get("/get-item-weight/:item_id", assignedSalesmanController.getItemWeight);

@@ -16,11 +16,11 @@ exports.insert = (
   item_gross_total = 0,
   packet_gross_total = 0,
   total_weight_with_bag = 0,
-  weightMachineTotals = null,   // single captured weight object { reading, grams, milligrams, confidence }
-  delivery_agent_id = null,     // ===== NEW (Delivery Agent) =====
+  weightMachineTotals = null,
+  delivery_agent_id = null,
   callback
 ) => {
-  // Handle optional parameters (existing shim logic)
+  // Handle optional parameters (shim logic)
   if (typeof from_user_id === 'function') {
     callback = from_user_id;
     from_user_id = null;
@@ -30,7 +30,7 @@ exports.insert = (
     packet_gross_total = 0;
     total_weight_with_bag = 0;
     weightMachineTotals = null;
-    delivery_agent_id = null; // NEW
+    delivery_agent_id = null;
   }
   if (typeof to_user_id === 'function' && callback) {
     callback = to_user_id;
@@ -40,7 +40,7 @@ exports.insert = (
     packet_gross_total = 0;
     total_weight_with_bag = 0;
     weightMachineTotals = null;
-    delivery_agent_id = null; // NEW
+    delivery_agent_id = null;
   }
   if (typeof capture_image === 'function' && callback) {
     callback = capture_image;
@@ -49,13 +49,13 @@ exports.insert = (
     packet_gross_total = 0;
     total_weight_with_bag = 0;
     weightMachineTotals = null;
-    delivery_agent_id = null; // NEW
+    delivery_agent_id = null;
   }
   // Shim for older callers that stop at total_weight_with_bag
   if (typeof weightMachineTotals === 'function' && callback === undefined) {
     callback = weightMachineTotals;
     weightMachineTotals = null;
-    delivery_agent_id = null; // NEW
+    delivery_agent_id = null;
   }
   // ===== NEW (Delivery Agent) =====
   // Shim for callers that pass weightMachineTotals but no delivery_agent_id
@@ -72,8 +72,10 @@ exports.insert = (
   const assigned_number = reference_number;
   const transfer_date_formatted = transfer_date || new Date().toISOString().split('T')[0];
 
-  // ===== NEW (Delivery Agent): NULL when "Without Delivery Agent" =====
+  // NULL when "Without Delivery Agent"
   const finalDeliveryAgentId = delivery_agent_id ? parseInt(delivery_agent_id) : null;
+  // 'pending' only when a delivery agent is selected
+  const finalDeliveryStatus = finalDeliveryAgentId ? 'pending' : null;
 
   let totalItems = transfer_data.length;
   let totalQuantity = 0;
@@ -154,6 +156,7 @@ exports.insert = (
     to_salesman_id: to_salesman_id,
     // ===== NEW (Delivery Agent) =====
     delivery_agent_id: finalDeliveryAgentId,
+    delivery_status: finalDeliveryStatus,
     transfer_date: transfer_date_formatted,
     remarks: remarks,
     created_by: created_by,
@@ -169,8 +172,7 @@ exports.insert = (
     total_net_weight: totalNetWeight
   });
 
-  // NEW (Delivery Agent): `delivery_agent_id` column added after
-  // weight_machine_raw, with one extra "?" placeholder (25 "?" in total).
+  // 26 "?" placeholders + NOW() x3 (weight_extracted_at, created_at, updated_at)
   const insertTransferSql = `
     INSERT INTO assigned_salesman_transfers (
       assigned_number,
@@ -198,47 +200,40 @@ exports.insert = (
       weight_machine_confidence,
       weight_machine_raw,
       delivery_agent_id,
+      delivery_status,
       weight_extracted_at,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
   `;
 
-  let latestWeightExtractedAt = null;
-  for (const item of transfer_data) {
-    if (item.weight_machine_reading && parseFloat(item.weight_machine_reading) > 0) {
-      latestWeightExtractedAt = new Date();
-      break;
-    }
-  }
-
   const transferParams = [
-    assigned_number,
-    from_stock_point_id || null,
-    to_salesman_id || null,
-    from_user_id || null,
-    to_user_id || null,
-    transfer_date_formatted,
-    totalItems,
-    totalQuantity,
-    totalGrossWeight,
-    totalNetWeight,
-    finalItemGrossTotal,
-    finalPacketGrossTotal,
-    finalTotalWeightWithBag,
-    'pending',
-    'pending',
-    remarks || null,
-    capture_image || null,
-    created_by || null,
-    pendingData,
-    totalWeightMachineReading || 0,
-    totalWeightMachineGrams || 0,
-    totalWeightMachineMilligrams || 0,
-    avgWeightMachineConfidence || 0,
-    null,
-    // ===== NEW (Delivery Agent) =====
-    finalDeliveryAgentId
+    assigned_number,                    // 1
+    from_stock_point_id || null,        // 2
+    to_salesman_id || null,             // 3
+    from_user_id || null,               // 4
+    to_user_id || null,                 // 5
+    transfer_date_formatted,            // 6
+    totalItems,                         // 7
+    totalQuantity,                      // 8
+    totalGrossWeight,                   // 9
+    totalNetWeight,                     // 10
+    finalItemGrossTotal,                // 11
+    finalPacketGrossTotal,              // 12
+    finalTotalWeightWithBag,            // 13
+    'pending',                          // 14 status
+    'pending',                          // 15 salesman_status
+    remarks || null,                    // 16
+    capture_image || null,              // 17
+    created_by || null,                 // 18
+    pendingData,                        // 19
+    totalWeightMachineReading || 0,     // 20
+    totalWeightMachineGrams || 0,       // 21
+    totalWeightMachineMilligrams || 0,  // 22
+    avgWeightMachineConfidence || 0,    // 23
+    null,                               // 24 weight_machine_raw
+    finalDeliveryAgentId,               // 25 delivery_agent_id
+    finalDeliveryStatus                 // 26 delivery_status
   ];
 
   db.query(insertTransferSql, transferParams, (err, transferResult) => {
@@ -269,8 +264,7 @@ exports.insert = (
     console.log(`✅ Assignment ${assigned_number} saved as PENDING (ID: ${assignedId})`);
     console.log(`📦 ${totalItems} items pending approval`);
     console.log(`📊 Total weight machine reading: ${totalWeightMachineReading}g`);
-    // NEW (Delivery Agent)
-    console.log(`🚚 Delivery agent id saved: ${finalDeliveryAgentId || 'none'}`);
+    console.log(`🚚 Delivery agent id: ${finalDeliveryAgentId || 'none'} | delivery_status: ${finalDeliveryStatus || 'none'}`);
 
     callback(null, { transfer_id: assignedId, transfer_number: assigned_number });
   });
@@ -536,12 +530,29 @@ exports.getById = (assigned_id, callback) => {
       ast.weight_machine_confidence,
       ast.weight_machine_raw,
       ast.weight_extracted_at,
+      ast.delivery_agent_id,
+      ast.delivery_status,
       sp.stock_point_name as from_stock_point_name,
       ad.account_name as to_salesman_name,
-      ad.mobile as salesman_mobile
+      ad.mobile as salesman_mobile,
+      da.agent_code as delivery_agent_code,
+      da.full_name as delivery_agent_name,
+      da.partner_type as delivery_partner_type,
+      da.contact_person as delivery_contact_person,
+      da.mobile_number as delivery_agent_mobile,
+      da.email as delivery_agent_email,
+      da.address as delivery_agent_address,
+      da.city as delivery_agent_city,
+      da.state as delivery_agent_state,
+      da.pincode as delivery_agent_pincode,
+      da.service_type as delivery_service_type,
+      da.tracking_url_template as delivery_tracking_url,
+      da.insurance_available as delivery_insurance_available,
+      da.profile_photo as delivery_agent_photo
     FROM assigned_salesman_transfers ast
     LEFT JOIN stock_points sp ON ast.from_stock_point_id = sp.stock_point_id
     LEFT JOIN account_details ad ON ast.to_salesman_id = ad.account_id
+    LEFT JOIN delivery_agents da ON ast.delivery_agent_id = da.id
     WHERE ast.assigned_id = ?
   `;
 
@@ -550,30 +561,29 @@ exports.getById = (assigned_id, callback) => {
       console.error("Error fetching transfer details:", err);
       return callback(err);
     }
-    
+
     if (mainResults.length === 0) {
       return callback(null, null);
     }
 
     const transferDetails = mainResults[0];
-    
+
     // If pending, parse items from pending_data
     if (transferDetails.salesman_status === 'pending' && transferDetails.pending_data) {
       try {
         const pendingData = JSON.parse(transferDetails.pending_data);
         const items = pendingData.transfer_data || [];
-        
-        const result = {
+
+        return callback(null, {
           transfer_details: transferDetails,
           transfer_items: items
-        };
-        return callback(null, result);
+        });
       } catch (parseError) {
         console.error("Error parsing pending_data:", parseError);
-        // Fallback to querying items table
+        // fall through to items table
       }
     }
-    
+
     // If approved or no pending_data, get items from items table
     const itemsSql = `
       SELECT * FROM assigned_salesman_items
@@ -586,13 +596,11 @@ exports.getById = (assigned_id, callback) => {
         console.error("Error fetching transfer items:", itemsErr);
         return callback(itemsErr);
       }
-      
-      const result = {
+
+      callback(null, {
         transfer_details: transferDetails,
         transfer_items: itemsResults || []
-      };
-      
-      callback(null, result);
+      });
     });
   });
 };
@@ -998,3 +1006,56 @@ exports.getItemsWithWeightsByAssignment = (assigned_id, callback) => {
   `;
   db.query(sql, [assigned_id], callback);
 };
+
+
+
+// ==================== GET PENDING DELIVERIES (delivery agent assigned, not yet received) ====================
+exports.getPendingDeliveriesBySalesman = (salesman_id, callback) => {
+  const sql = `
+    SELECT 
+      ast.assigned_id,
+      ast.assigned_number,
+      ast.total_items,
+      ast.created_at,
+      ast.delivery_agent_id,
+      ast.delivery_status,
+      sp.stock_point_name as from_stock_point_name,
+      da.agent_code as delivery_agent_code,
+      da.full_name as delivery_agent_name
+    FROM assigned_salesman_transfers ast
+    LEFT JOIN stock_points sp ON ast.from_stock_point_id = sp.stock_point_id
+    LEFT JOIN delivery_agents da ON ast.delivery_agent_id = da.id
+    WHERE ast.to_salesman_id = ?
+      AND ast.delivery_agent_id IS NOT NULL
+      AND ast.delivery_status = 'pending'
+      AND ast.salesman_status <> 'rejected'
+    ORDER BY ast.created_at DESC
+  `;
+  db.query(sql, [salesman_id], callback);
+};
+
+// ==================== UPDATE DELIVERY STATUS (pending -> received) ====================
+exports.updateDeliveryStatus = (assigned_id, status, callback) => {
+  const sql = `
+    UPDATE assigned_salesman_transfers
+    SET delivery_status = ?, updated_at = NOW()
+    WHERE assigned_id = ?
+      AND delivery_agent_id IS NOT NULL
+      AND delivery_status = 'pending'
+  `;
+  db.query(sql, [status, assigned_id], (err, result) => {
+    if (err) return callback(err);
+
+    // mark the delivery notification as read
+    db.query(
+      `UPDATE notifications SET is_read = 1
+       WHERE related_id = ? AND type = 'delivery_agent_assignment'`,
+      [assigned_id],
+      () => {}
+    );
+
+    callback(null, { affectedRows: result.affectedRows });
+  });
+};
+
+

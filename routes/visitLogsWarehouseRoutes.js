@@ -130,6 +130,47 @@ function getFullImageUrl(photoPath) {
   return `${baseUrl}${normalizedPath}`;
 }
 
+// ================== NEW HELPERS (warehouse notification details) ==================
+
+// IST date/time formatter so warehouse always sees the correct local time
+function formatIST(dateInput) {
+  const d = new Date(dateInput);
+  return {
+    date: d.toLocaleDateString('en-US', {
+      timeZone: 'Asia/Kolkata', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+    }),
+    time: d.toLocaleTimeString('en-US', {
+      timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true
+    })
+  };
+}
+
+// "- BARCODE - Product Name (Category)" lines
+function buildProductLines(barcodes, details = []) {
+  const map = {};
+  (details || []).forEach(d => { if (d && d.PCode_BarCode) map[d.PCode_BarCode] = d; });
+  return barcodes.map(b => {
+    const d = map[b];
+    const name = d && d.product_name ? ` - ${d.product_name}` : '';
+    const cat = d && d.category ? ` (${d.category})` : '';
+    return `- ${b}${name}${cat}`;
+  });
+}
+
+// Structured "Label: value" message so the dashboard modal can parse it
+function buildWarehouseScheduleMessage({ intro, customerName, customerId, date, time, salesmanName, barcodes, details }) {
+  return [
+    intro,
+    `Customer: ${customerName} (${customerId})`,
+    `Date: ${date}`,
+    `Time: ${time}`,
+    `Salesperson: ${salesmanName || 'Not assigned yet'}`,
+    `Products (${barcodes.length}):`,
+    ...buildProductLines(barcodes, details)
+  ].join('\n');
+}
+// ===================================================================================
+
 // Helper function to send email with photo (FIXED - using inline attachment for better compatibility)
 async function sendVisitScheduleEmail(recipientEmail, recipientName, emailType, data) {
   try {
@@ -616,14 +657,17 @@ async function createWarehouseScheduleNotification(
       );
     }
 
-    // Create notification for warehouse
+    // ===== CHANGED: warehouse notification now carries full product/salesman details =====
     const warehouseTitle = '📦 New Customer Visit Scheduled';
-    const warehouseMessage = `A new customer visit has been scheduled at your warehouse.
-      Customer: ${customerName} (${customerId})
-      Date: ${formattedDate} at ${formattedTime}
-      ${barcodes.length} item(s): ${barcodes.join(', ')}
-      Salesperson: ${salesmanName || 'Not assigned yet'}
-      Please prepare for the customer visit.`;
+    const wIST = formatIST(scheduledDate);
+    const warehouseMessage = buildWarehouseScheduleMessage({
+      intro: 'A new customer visit has been scheduled at your warehouse.',
+      customerName, customerId,
+      date: wIST.date, time: wIST.time,
+      salesmanName,
+      barcodes,
+      details: barcodeDetailsArray
+    });
 
     await queryAsync(
       `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at)
@@ -634,9 +678,11 @@ async function createWarehouseScheduleNotification(
     // 👇 Send push notification to warehouse
     await sendPushToUser(
       queryAsync, warehouseId, 'warehouse',
-      warehouseTitle, `New customer visit scheduled at your warehouse`,
+      warehouseTitle,
+      `${salesmanName || 'Unassigned'} · ${barcodes.length} item(s) · ${wIST.date} ${wIST.time}`,
       '/warehouse-dashboard'
     );
+    // ======================================================================================
 
     return true;
   } catch (error) {
@@ -650,6 +696,7 @@ router.get('/', async (req, res) => {
   try {
     console.log('📋 Fetching all warehouse visit schedules...');
 
+    // CHANGED: added product_name and category subqueries
     const schedules = await queryAsync(`
       SELECT
         vlws.*,
@@ -659,7 +706,11 @@ router.get('/', async (req, res) => {
         c.mobile as customer_mobile,
         c.email as customer_email,
         sp.stock_point_name as warehouse_name,
-        sp.location as warehouse_location
+        sp.location as warehouse_location,
+        (SELECT sti.product_name FROM stock_transfer_items sti
+           WHERE sti.PCode_BarCode = vlws.barcode LIMIT 1) AS product_name,
+        (SELECT sti.category FROM stock_transfer_items sti
+           WHERE sti.PCode_BarCode = vlws.barcode LIMIT 1) AS category
       FROM visit_logs_warehouse_schedule vlws
       LEFT JOIN account_details c ON vlws.customer_account_id = c.account_id
       LEFT JOIN stock_points sp ON vlws.warehouse_id = sp.stock_point_id
@@ -758,6 +809,95 @@ router.get('/', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch scheduled warehouse visits'
+    });
+  }
+});
+
+// GET - Fetch account details (customers only)
+// MOVED ABOVE '/:id' so it is actually reachable (logic unchanged)
+router.get('/account-details', async (req, res) => {
+  try {
+    console.log('📋 Fetching account details for customers...');
+
+    const accounts = await queryAsync(`
+      SELECT
+        account_id,
+        customer_id,
+        user_id,
+        account_name,
+        print_name,
+        account_group,
+        op_bal,
+        metal_balance,
+        dr_cr,
+        address1,
+        address2,
+        city,
+        pincode,
+        state,
+        state_code,
+        phone,
+        mobile,
+        contact_person,
+        email,
+        birthday,
+        anniversary,
+        bank_account_no,
+        bank_name,
+        ifsc_code,
+        branch,
+        gst_in,
+        aadhar_card,
+        pan_card,
+        created_at,
+        religion,
+        images,
+        password,
+        duty_start_time,
+        duty_end_time
+      FROM account_details
+      WHERE account_group = 'CUSTOMERS'
+      ORDER BY account_name ASC
+    `);
+
+    console.log(`✅ Found ${accounts.length} customers`);
+    res.json(accounts);
+  } catch (error) {
+    console.error('❌ Error fetching account details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch account details'
+    });
+  }
+});
+
+// GET - Get all salesmen (for assign dropdown)
+// MOVED ABOVE '/:id' so it is actually reachable (logic unchanged)
+router.get('/salesmen', async (req, res) => {
+  try {
+    console.log('📋 Fetching all salesmen...');
+
+    const salesmen = await queryAsync(`
+      SELECT
+        account_id,
+        account_name,
+        phone,
+        mobile,
+        email,
+        duty_start_time,
+        duty_end_time
+      FROM account_details
+      WHERE account_group = 'SALESMAN'
+      ORDER BY account_name ASC
+    `);
+
+    console.log(`✅ Found ${salesmen.length} salesmen`);
+    res.json(salesmen);
+  } catch (error) {
+    console.error('❌ Error fetching salesmen:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch salesmen'
     });
   }
 });
@@ -1304,13 +1444,18 @@ async function createWarehouseScheduleUpdateNotification(
       );
     }
 
-    // Create update notification for warehouse
+    // ===== CHANGED: warehouse update notification now carries full product/salesman details =====
     const warehouseTitle = '📦 Warehouse Visit Updated';
-    const warehouseMessage = `A warehouse visit has been updated.
-      Customer: ${customerName} (${customerId})
-      Date: ${formattedDate} at ${formattedTime}
-      ${barcodes.length} item(s): ${barcodes.join(', ')}
-      Salesperson: ${salesmanName || 'Not assigned yet'}`;
+    const wIST = formatIST(scheduledDate);
+    const warehouseMessage = buildWarehouseScheduleMessage({
+      intro: 'A warehouse visit has been updated.',
+      customerName, customerId,
+      date: wIST.date, time: wIST.time,
+      salesmanName,
+      barcodes,
+      details: barcodeDetailsArray
+    });
+    // =============================================================================================
 
     await queryAsync(
       `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at)
@@ -1527,11 +1672,11 @@ router.put('/:id', upload.single('salesman_photo'), async (req, res) => {
       );
     }
 
-    // Get barcode details for all barcodes
+    // Get barcode details for all barcodes (CHANGED: also selects category)
     const barcodeDetails = [];
     for (const barcode of parsedBarcodes) {
       const detail = await queryAsync(`
-        SELECT sti.PCode_BarCode, sti.product_name
+        SELECT sti.PCode_BarCode, sti.product_name, sti.category
         FROM stock_transfer_items sti
         WHERE sti.PCode_BarCode = ?
         LIMIT 1
@@ -2257,63 +2402,6 @@ router.patch('/:id/status', async (req, res) => {
   }
 });
 
-// GET - Fetch account details (customers only)
-router.get('/account-details', async (req, res) => {
-  try {
-    console.log('📋 Fetching account details for customers...');
-
-    const accounts = await queryAsync(`
-      SELECT
-        account_id,
-        customer_id,
-        user_id,
-        account_name,
-        print_name,
-        account_group,
-        op_bal,
-        metal_balance,
-        dr_cr,
-        address1,
-        address2,
-        city,
-        pincode,
-        state,
-        state_code,
-        phone,
-        mobile,
-        contact_person,
-        email,
-        birthday,
-        anniversary,
-        bank_account_no,
-        bank_name,
-        ifsc_code,
-        branch,
-        gst_in,
-        aadhar_card,
-        pan_card,
-        created_at,
-        religion,
-        images,
-        password,
-        duty_start_time,
-        duty_end_time
-      FROM account_details
-      WHERE account_group = 'CUSTOMERS'
-      ORDER BY account_name ASC
-    `);
-
-    console.log(`✅ Found ${accounts.length} customers`);
-    res.json(accounts);
-  } catch (error) {
-    console.error('❌ Error fetching account details:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch account details'
-    });
-  }
-});
-
 // Helper function for salesman assignment notification with photo
 async function createSalesmanAssignmentNotification(scheduleData, salesmanId, salesmanName) {
   try {
@@ -2704,36 +2792,6 @@ router.put('/:id/assign-salesman', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to assign salesman: ' + error.message
-    });
-  }
-});
-
-// GET - Get all salesmen (for assign dropdown)
-router.get('/salesmen', async (req, res) => {
-  try {
-    console.log('📋 Fetching all salesmen...');
-
-    const salesmen = await queryAsync(`
-      SELECT
-        account_id,
-        account_name,
-        phone,
-        mobile,
-        email,
-        duty_start_time,
-        duty_end_time
-      FROM account_details
-      WHERE account_group = 'SALESMAN'
-      ORDER BY account_name ASC
-    `);
-
-    console.log(`✅ Found ${salesmen.length} salesmen`);
-    res.json(salesmen);
-  } catch (error) {
-    console.error('❌ Error fetching salesmen:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch salesmen'
     });
   }
 });

@@ -6,6 +6,7 @@ const { createCalendarEvent, createCalendarNote } = require('../utils/googleCale
 /**
  * Save base64 image to file and return the relative URL path.
  * If already a file path, return it unchanged.
+ * type: 'item' | 'capture' | 'delivery'
  */
 const saveImageFile = (base64String, assignedNumber, type = 'item', itemIndex = 0) => {
   if (!base64String) return null;
@@ -28,7 +29,7 @@ const saveImageFile = (base64String, assignedNumber, type = 'item', itemIndex = 
 
     const uploadDir = path.join(__dirname, '../uploads/assigned-salesman');
     console.log(`Upload directory path: ${uploadDir}`);
-    
+
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
       console.log(`✅ Created directory: ${uploadDir}`);
@@ -38,6 +39,9 @@ const saveImageFile = (base64String, assignedNumber, type = 'item', itemIndex = 
     let filename;
     if (type === 'capture') {
       filename = `capture_${assignedNumber}_${timestamp}.${imageType}`;
+    } else if (type === 'delivery') {
+      // NEW: photo taken by salesman when receiving from delivery agent
+      filename = `delivery_received_${assignedNumber}_${timestamp}.${imageType}`;
     } else {
       filename = `assigned_${assignedNumber}_item_${itemIndex}_${timestamp}.${imageType}`;
     }
@@ -99,9 +103,9 @@ const getStockPointName = (stockPointId) => {
 
 exports.saveAssignedSalesman = (req, res) => {
   try {
-    const { 
-      transfer_data, 
-      from_stock_point_id, 
+    const {
+      transfer_data,
+      from_stock_point_id,
       to_salesman_id,
       transfer_date,
       reference_number,
@@ -180,14 +184,14 @@ exports.saveAssignedSalesman = (req, res) => {
           console.error("Database error:", err);
           return res.status(500).json({ message: "Error saving assigned salesman data", error: err });
         }
-        
+
         // Existing Accept / Reject notification
         if (to_salesman_id && !notificationCache.has(notificationKey)) {
           notificationCache.add(notificationKey);
           setTimeout(() => {
             notificationCache.delete(notificationKey);
           }, 10000);
-          
+
           createSalesmanAssignmentNotification(
             to_salesman_id,
             assigned_number,
@@ -197,7 +201,7 @@ exports.saveAssignedSalesman = (req, res) => {
           );
         }
 
-        // NEW: Delivery agent notification (with "Received" button in the dashboard)
+        // Delivery agent notification (with "Received" button in the dashboard)
         if (finalDeliveryAgentId && to_salesman_id) {
           createDeliveryAgentNotification(
             to_salesman_id,
@@ -214,7 +218,7 @@ exports.saveAssignedSalesman = (req, res) => {
             const salesmanInfo = await getSalesmanEmail(to_salesman_id);
             if (salesmanInfo && salesmanInfo.email) {
               const fromStockPointName = await getStockPointName(from_stock_point_id);
-              
+
               const assignmentData = {
                 assigned_number,
                 transfer_date: transfer_date,
@@ -222,9 +226,9 @@ exports.saveAssignedSalesman = (req, res) => {
                 remarks,
                 salesmanName: salesmanInfo.account_name,
               };
-              
+
               console.log(`📅 Creating calendar event with date: ${transfer_date}`);
-              
+
               createCalendarEvent(assignmentData, salesmanInfo.email, fromStockPointName)
                 .then(() => console.log(`📅 Calendar invite sent to ${salesmanInfo.email}`))
                 .catch(calError => console.error('Calendar error:', calError));
@@ -235,9 +239,9 @@ exports.saveAssignedSalesman = (req, res) => {
             console.error('Calendar notification error:', calError);
           }
         }
-        
-        res.json({ 
-          message: "Assignment created successfully. Waiting for salesman approval.", 
+
+        res.json({
+          message: "Assignment created successfully. Waiting for salesman approval.",
           transfer_id: result.transfer_id,
           transfer_number: result.transfer_number,
           salesman_status: 'pending',
@@ -256,10 +260,10 @@ exports.saveAssignedSalesman = (req, res) => {
 };
 
 
-// Function to create notification for salesman (UPDATED to include transfer_id)
+// Function to create notification for salesman
 const createSalesmanAssignmentNotification = (salesmanId, assignedNumber, transferData, fromStockPointId, transferId) => {
   const db = require("../db");
-  
+
   // Check if notification already exists for this assignment
   const checkSql = `SELECT id FROM notifications WHERE user_id = ? AND related_id = ? AND type = 'salesman_assignment' AND is_read = 0`;
   db.query(checkSql, [salesmanId, transferId], (checkErr, checkResults) => {
@@ -267,13 +271,13 @@ const createSalesmanAssignmentNotification = (salesmanId, assignedNumber, transf
       console.error('Error checking existing notification:', checkErr);
       return;
     }
-    
+
     // If notification already exists, don't create duplicate
     if (checkResults.length > 0) {
       console.log(`⚠️ Notification already exists for assignment ${assignedNumber}, skipping duplicate`);
       return;
     }
-    
+
     db.query(
       'SELECT account_name FROM account_details WHERE account_id = ?',
       [salesmanId],
@@ -282,22 +286,22 @@ const createSalesmanAssignmentNotification = (salesmanId, assignedNumber, transf
           console.error('Error fetching salesman:', err);
           return;
         }
-        
+
         const salesmanName = salesmanResult.length > 0 ? salesmanResult[0].account_name : 'Salesman';
         const itemCount = transferData.length;
         const productNames = transferData.map(item => item.product_name).filter(Boolean).join(', ');
         const firstProducts = productNames.substring(0, 100) + (productNames.length > 100 ? '...' : '');
-        
+
         db.query(
           'SELECT stock_point_name FROM stock_points WHERE stock_point_id = ?',
           [fromStockPointId],
           (stockErr, stockResult) => {
             const stockPointName = stockErr || stockResult.length === 0 ? 'Stock Room' : stockResult[0].stock_point_name;
-            
+
             // Create a single comprehensive notification with all details
             const title = `📦 New Assignment #${assignedNumber}`;
             const message = `You have ${itemCount} new item(s) assigned from ${stockPointName}. Products: ${firstProducts}. Please review and accept.`;
-            
+
             db.query(
               `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
                VALUES (?, 'salesman', ?, ?, 'salesman_assignment', ?, NOW())`,
@@ -355,7 +359,7 @@ exports.updateSalesmanStatus = (req, res) => {
         assignedSalesmanModel.getById(transfer_id, (getErr, getResult) => {
           if (!getErr && getResult && getResult.transfer_items) {
             const productCodes = getResult.transfer_items.map(item => item.PCode_BarCode).filter(Boolean);
-            
+
             if (productCodes.length > 0 && salesmanId) {
               assignedSalesmanModel.updateStockPointForSalesman(productCodes, salesmanId, (stockErr, stockResult) => {
                 if (stockErr) {
@@ -367,14 +371,14 @@ exports.updateSalesmanStatus = (req, res) => {
             }
           }
         });
-        
+
         createSalesmanApprovalNotification(salesmanId, transferDetails.assigned_number, 'accepted', transfer_id);
       } else {
         createSalesmanApprovalNotification(salesmanId, transferDetails.assigned_number, 'rejected', transfer_id);
       }
 
-      res.json({ 
-        message: `Assignment ${status} successfully`, 
+      res.json({
+        message: `Assignment ${status} successfully`,
         transfer_id: transfer_id,
         status: status
       });
@@ -385,7 +389,7 @@ exports.updateSalesmanStatus = (req, res) => {
 // Function for approval notification
 const createSalesmanApprovalNotification = (salesmanId, assignedNumber, status, transferId) => {
   const db = require("../db");
-  
+
   db.query(
     'SELECT account_name FROM account_details WHERE account_id = ?',
     [salesmanId],
@@ -394,16 +398,16 @@ const createSalesmanApprovalNotification = (salesmanId, assignedNumber, status, 
         console.error('Error fetching salesman:', err);
         return;
       }
-      
+
       const salesmanName = salesmanResult.length > 0 ? salesmanResult[0].account_name : 'Salesman';
-      
-      const title = status === 'accepted' 
-        ? `✅ Assignment #${assignedNumber} Accepted` 
+
+      const title = status === 'accepted'
+        ? `✅ Assignment #${assignedNumber} Accepted`
         : `❌ Assignment #${assignedNumber} Rejected`;
       const message = status === 'accepted'
         ? `Salesman ${salesmanName} has accepted the assignment #${assignedNumber}`
         : `Salesman ${salesmanName} has rejected the assignment #${assignedNumber}`;
-      
+
       db.query(
         `INSERT INTO notifications (user_id, user_type, title, message, type, related_id, created_at) 
          VALUES (?, 'admin', ?, ?, 'salesman_assignment', ?, NOW())`,
@@ -423,11 +427,11 @@ const createSalesmanApprovalNotification = (salesmanId, assignedNumber, status, 
 // ==================== GET PENDING ASSIGNMENTS ====================
 exports.getPendingAssignments = (req, res) => {
   const { salesman_id } = req.query;
-  
+
   if (!salesman_id) {
     return res.status(400).json({ message: "Salesman ID is required" });
   }
-  
+
   assignedSalesmanModel.getPendingAssignmentsBySalesman(salesman_id, (err, results) => {
     if (err) {
       console.error("Error fetching pending assignments:", err);
@@ -552,11 +556,11 @@ exports.updateStatus = (req, res) => {
 
 exports.getAssignedProductsBySalesman = (req, res) => {
   const { salesman_id } = req.query;
-  
+
   if (!salesman_id) {
     return res.status(400).json({ message: "Salesman ID is required" });
   }
-  
+
   assignedSalesmanModel.getProductsBySalesman(salesman_id, (err, results) => {
     if (err) {
       console.error("Error fetching assigned products:", err);
@@ -569,12 +573,12 @@ exports.getAssignedProductsBySalesman = (req, res) => {
 // ==================== UPDATE ITEM WEIGHT ====================
 exports.updateItemWeight = (req, res) => {
   const { item_id } = req.params;
-  const { 
-    total_grams, 
-    grams, 
-    milligrams, 
-    raw_text, 
-    confidence 
+  const {
+    total_grams,
+    grams,
+    milligrams,
+    raw_text,
+    confidence
   } = req.body;
 
   if (!item_id) {
@@ -599,8 +603,8 @@ exports.updateItemWeight = (req, res) => {
       return res.status(500).json({ message: "Error updating item weight", error: err.message });
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: "Weight updated successfully",
       item_id: item_id,
       weight_data: weightData
@@ -626,8 +630,8 @@ exports.getItemWeight = (req, res) => {
       return res.status(404).json({ message: "Item not found" });
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: results[0]
     });
   });
@@ -647,14 +651,13 @@ exports.getItemsWithWeightsByAssignment = (req, res) => {
       return res.status(500).json({ message: "Error fetching items", error: err.message });
     }
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: results,
       count: results.length
     });
   });
 };
-
 
 
 // ==================== DELIVERY AGENT NOTIFICATION ====================
@@ -728,10 +731,11 @@ exports.getPendingDeliveries = (req, res) => {
   });
 };
 
-// ==================== MARK DELIVERY AS RECEIVED ====================
+// ==================== MARK DELIVERY AS RECEIVED (with photo proof) ====================
+// CHANGED: now requires `received_image` (base64) in the request body
 exports.updateDeliveryStatus = (req, res) => {
   const { transfer_id } = req.params;
-  const { status } = req.body;
+  const { status, received_image } = req.body;
 
   if (!transfer_id) {
     return res.status(400).json({ message: "Transfer ID is required" });
@@ -741,7 +745,16 @@ exports.updateDeliveryStatus = (req, res) => {
     return res.status(400).json({ message: "Status must be 'received'" });
   }
 
-  assignedSalesmanModel.updateDeliveryStatus(transfer_id, status, (err, result) => {
+  if (!received_image) {
+    return res.status(400).json({ message: "Package photo is required to confirm receipt" });
+  }
+
+  const savedPath = saveImageFile(received_image, `transfer${transfer_id}`, 'delivery');
+  if (!savedPath) {
+    return res.status(500).json({ message: "Failed to save package photo" });
+  }
+
+  assignedSalesmanModel.updateDeliveryStatus(transfer_id, status, savedPath, (err, result) => {
     if (err) {
       console.error("Error updating delivery status:", err);
       return res.status(500).json({ message: "Error updating delivery status" });
@@ -754,7 +767,8 @@ exports.updateDeliveryStatus = (req, res) => {
     res.json({
       message: "Delivery marked as received",
       transfer_id: transfer_id,
-      delivery_status: 'received'
+      delivery_status: 'received',
+      delivery_received_image: savedPath
     });
   });
 };

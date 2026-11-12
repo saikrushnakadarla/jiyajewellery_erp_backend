@@ -1,7 +1,6 @@
 const db = require("../db");
 
 // ==================== INSERT (Now saves as PENDING) ====================
-// ==================== INSERT (Now saves as PENDING) ====================
 exports.insert = (
   transfer_data,
   from_stock_point_id,
@@ -57,13 +56,11 @@ exports.insert = (
     weightMachineTotals = null;
     delivery_agent_id = null;
   }
-  // ===== NEW (Delivery Agent) =====
   // Shim for callers that pass weightMachineTotals but no delivery_agent_id
   if (typeof delivery_agent_id === 'function' && callback === undefined) {
     callback = delivery_agent_id;
     delivery_agent_id = null;
   }
-  // ================================
 
   if (!Array.isArray(transfer_data) || transfer_data.length === 0) {
     return callback(new Error("Invalid transfer_data array"));
@@ -154,7 +151,6 @@ exports.insert = (
     })),
     from_stock_point_id: from_stock_point_id,
     to_salesman_id: to_salesman_id,
-    // ===== NEW (Delivery Agent) =====
     delivery_agent_id: finalDeliveryAgentId,
     delivery_status: finalDeliveryStatus,
     transfer_date: transfer_date_formatted,
@@ -271,26 +267,25 @@ exports.insert = (
 };
 
 // ==================== APPROVE / ACCEPT ====================
-// ==================== APPROVE / ACCEPT ====================
 exports.approveAssignment = (assigned_id, callback) => {
   // First get the pending data
   const getSql = `SELECT pending_data FROM assigned_salesman_transfers WHERE assigned_id = ?`;
-  
+
   db.query(getSql, [assigned_id], (err, results) => {
     if (err) return callback(err);
     if (results.length === 0) return callback(new Error("Assignment not found"));
-    
+
     const pendingData = results[0].pending_data;
     if (!pendingData) return callback(new Error("No pending data found"));
-    
+
     try {
       const data = JSON.parse(pendingData);
       const transferData = data.transfer_data || [];
-      
+
       if (transferData.length === 0) {
         return callback(new Error("No items to transfer"));
       }
-      
+
       // Insert items into assigned_salesman_items
       const insertItemsSql = `
         INSERT INTO assigned_salesman_items (
@@ -357,13 +352,13 @@ exports.approveAssignment = (assigned_id, callback) => {
         item.weight_machine_reading ? new Date() : null,
         new Date()
       ]);
-      
+
       db.query(insertItemsSql, [itemValues], (itemsErr) => {
         if (itemsErr) {
           console.error("Error inserting transfer items:", itemsErr);
           return callback(itemsErr);
         }
-        
+
         // Update status to 'accepted' and clear pending_data
         const updateSql = `
           UPDATE assigned_salesman_transfers 
@@ -373,18 +368,18 @@ exports.approveAssignment = (assigned_id, callback) => {
               updated_at = NOW()
           WHERE assigned_id = ?
         `;
-        
+
         db.query(updateSql, [assigned_id], (updateErr) => {
           if (updateErr) {
             console.error("Error updating status:", updateErr);
             return callback(updateErr);
           }
-          
+
           console.log(`✅ Assignment ${assigned_id} approved with ${itemValues.length} items`);
           callback(null, { approved: true, itemCount: itemValues.length });
         });
       });
-      
+
     } catch (parseError) {
       console.error("Error parsing pending data:", parseError);
       callback(parseError);
@@ -394,7 +389,7 @@ exports.approveAssignment = (assigned_id, callback) => {
 
 // ==================== REJECT ====================
 exports.rejectAssignment = (assigned_id, callback) => {
-  // 🆕 FIX: fetch pending_data first so we know which barcodes to revert
+  // fetch pending_data first so we know which barcodes to revert
   const getSql = `SELECT pending_data FROM assigned_salesman_transfers WHERE assigned_id = ?`;
 
   db.query(getSql, [assigned_id], (getErr, getResults) => {
@@ -429,7 +424,7 @@ exports.rejectAssignment = (assigned_id, callback) => {
         return callback(err);
       }
 
-      // 🆕 FIX: release the tags back to Available so they show up again
+      // release the tags back to Available so they show up again
       if (barcodes.length > 0) {
         const placeholders = barcodes.map(() => '?').join(',');
         const revertSql = `
@@ -452,7 +447,6 @@ exports.rejectAssignment = (assigned_id, callback) => {
   });
 };
 
-// ==================== GET PENDING ASSIGNMENTS ====================
 // ==================== GET PENDING ASSIGNMENTS ====================
 exports.getPendingAssignmentsBySalesman = (salesman_id, callback) => {
   const sql = `
@@ -498,7 +492,6 @@ exports.getPendingAssignmentsBySalesman = (salesman_id, callback) => {
 };
 
 // ==================== GET BY ID (with items from pending_data if not approved) ====================
-// ==================== GET BY ID (with items from pending_data if not approved) ====================
 exports.getById = (assigned_id, callback) => {
   const mainSql = `
     SELECT 
@@ -531,7 +524,9 @@ exports.getById = (assigned_id, callback) => {
       ast.weight_machine_raw,
       ast.weight_extracted_at,
       ast.delivery_agent_id,
-      ast.delivery_status, 
+      ast.delivery_status,
+      ast.delivery_received_image,
+      ast.delivery_received_at,
       sp.stock_point_name as from_stock_point_name,
       ad.account_name as to_salesman_name,
       ad.mobile as salesman_mobile,
@@ -606,7 +601,6 @@ exports.getById = (assigned_id, callback) => {
 };
 
 // ==================== GET ALL ====================
-// ==================== GET ALL ====================
 exports.getAll = (callback) => {
   const sql = `
     SELECT 
@@ -636,9 +630,11 @@ exports.getAll = (callback) => {
       ast.weight_machine_milligrams,
       ast.weight_machine_confidence,
       ast.weight_machine_raw,
-      ast.weight_extracted_at, 
-       ast.delivery_agent_id,
+      ast.weight_extracted_at,
+      ast.delivery_agent_id,
       ast.delivery_status,
+      ast.delivery_received_image,
+      ast.delivery_received_at,
       sp.stock_point_name as from_stock_point_name,
       ad.account_name as to_salesman_name,
       ad.mobile as salesman_mobile
@@ -696,7 +692,6 @@ exports.updateStockPointForSalesman = (productCodes, salesmanId, callback) => {
 // ==================== UPDATE SALESMAN STATUS ====================
 exports.updateSalesmanStatus = (assigned_id, status, callback) => {
   if (status === 'accepted') {
-    // Call approve function
     exports.approveAssignment(assigned_id, callback);
   } else if (status === 'rejected') {
     exports.rejectAssignment(assigned_id, callback);
@@ -706,8 +701,6 @@ exports.updateSalesmanStatus = (assigned_id, status, callback) => {
 };
 
 // ==================== OTHER EXISTING METHODS ====================
-// Keep all other existing methods (update, delete, getLastAssignedNumber, etc.)
-
 exports.update = (assigned_id, status, remarks, callback) => {
   const sql = `
     UPDATE assigned_salesman_transfers 
@@ -718,7 +711,7 @@ exports.update = (assigned_id, status, remarks, callback) => {
 };
 
 exports.delete = (assigned_id, callback) => {
-  // 🆕 FIX: fetch pending_data first (if still pending) so we can release the tags
+  // fetch pending_data first (if still pending) so we can release the tags
   const getSql = `SELECT pending_data, salesman_status FROM assigned_salesman_transfers WHERE assigned_id = ?`;
 
   db.query(getSql, [assigned_id], (getErr, getResults) => {
@@ -745,7 +738,7 @@ exports.delete = (assigned_id, callback) => {
       db.query(deleteTransferSql, [assigned_id], (deleteErr, deleteResult) => {
         if (deleteErr) return callback(deleteErr);
 
-        // 🆕 FIX: release tags that were locked as Pending Assignment
+        // release tags that were locked as Pending Assignment
         if (barcodes.length > 0) {
           const placeholders = barcodes.map(() => '?').join(',');
           const revertSql = `
@@ -788,11 +781,11 @@ exports.getLastAssignedNumber = (callback) => {
       console.error("Error fetching last assigned number:", err);
       return callback(err);
     }
-    
+
     if (results.length === 0) {
       return callback(null, "ASN001");
     }
-    
+
     const lastNumber = results[0].assigned_number;
     const match = lastNumber.match(/ASN(\d+)/);
     if (match) {
@@ -918,7 +911,7 @@ exports.getProductsBySalesman = (salesman_id, callback) => {
       AND ast.status = 'completed'
     ORDER BY ast.transfer_date DESC, asi.item_id ASC
   `;
-  
+
   db.query(sql, [salesman_id], (err, results) => {
     if (err) {
       console.error("Error fetching products by salesman:", err);
@@ -928,16 +921,14 @@ exports.getProductsBySalesman = (salesman_id, callback) => {
   });
 };
 
-
-// ==================== UPDATE WEIGHT FOR ITEM ====================
 // ==================== UPDATE WEIGHT FOR ITEM ====================
 exports.updateItemWeight = (item_id, weightData, callback) => {
-  const { 
-    total_grams, 
-    grams, 
-    milligrams, 
-    raw_text, 
-    confidence 
+  const {
+    total_grams,
+    grams,
+    milligrams,
+    raw_text,
+    confidence
   } = weightData;
 
   const sql = `
@@ -1009,8 +1000,6 @@ exports.getItemsWithWeightsByAssignment = (assigned_id, callback) => {
   db.query(sql, [assigned_id], callback);
 };
 
-
-
 // ==================== GET PENDING DELIVERIES (delivery agent assigned, not yet received) ====================
 exports.getPendingDeliveriesBySalesman = (salesman_id, callback) => {
   const sql = `
@@ -1036,28 +1025,32 @@ exports.getPendingDeliveriesBySalesman = (salesman_id, callback) => {
   db.query(sql, [salesman_id], callback);
 };
 
-// ==================== UPDATE DELIVERY STATUS (pending -> received) ====================
-exports.updateDeliveryStatus = (assigned_id, status, callback) => {
+// ==================== UPDATE DELIVERY STATUS (pending -> received, with photo) ====================
+// CHANGED: now takes receivedImagePath and saves it with a timestamp
+exports.updateDeliveryStatus = (assigned_id, status, receivedImagePath, callback) => {
   const sql = `
     UPDATE assigned_salesman_transfers
-    SET delivery_status = ?, updated_at = NOW()
+    SET delivery_status = ?,
+        delivery_received_image = ?,
+        delivery_received_at = NOW(),
+        updated_at = NOW()
     WHERE assigned_id = ?
       AND delivery_agent_id IS NOT NULL
       AND delivery_status = 'pending'
   `;
-  db.query(sql, [status, assigned_id], (err, result) => {
+  db.query(sql, [status, receivedImagePath, assigned_id], (err, result) => {
     if (err) return callback(err);
 
     // mark the delivery notification as read
-    db.query(
-      `UPDATE notifications SET is_read = 1
-       WHERE related_id = ? AND type = 'delivery_agent_assignment'`,
-      [assigned_id],
-      () => {}
-    );
+    if (result.affectedRows > 0) {
+      db.query(
+        `UPDATE notifications SET is_read = 1
+         WHERE related_id = ? AND type = 'delivery_agent_assignment'`,
+        [assigned_id],
+        () => {}
+      );
+    }
 
     callback(null, { affectedRows: result.affectedRows });
   });
 };
-
-
